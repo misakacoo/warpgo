@@ -148,6 +148,9 @@ func (a *app) cmdWatch(args []string) int {
 		Quiet:        true,
 		// 断链而配置未变时做硬复位 —— 见 ensureOptions.ResetIfIdle 的说明。
 		ResetIfIdle: true,
+		// **刻意不在这里验证链路**：巡检刚从"不通"里恢复，立刻再探一次既是重复劳动，
+		// 也会把"我已经把它修好了"误报成"修不好"（下一轮本来就会体检）。
+		ProbeAfterEnsure: false,
 	}
 
 	// Ctrl-C 与 systemd stop 都走这条路：ctx 一取消，循环立刻收尾并安静退出。

@@ -40,8 +40,20 @@ const (
 	// 的竞态 —— 那样的失败看起来像随机断网，非常难排查。
 	selfCheckBudget = 25 * time.Second
 
-	// verifyTimeout 是"换个后端再试"之前那次体检的单族超时。
-	verifyTimeout = 8 * time.Second
+	// verifyTimeout 是"换个后端再试"之前那次体检的**单族**超时。
+	verifyTimeout = 6 * time.Second
+
+	// verifyAttempts / verifyGap 是体检的重试次数与间隔。
+	//
+	// 为什么必须重试：这是"用探测结果决定要不要换后端"的策略，而一次探测失败
+	// 的代价很大 —— 拆掉一条本来好好的隧道、换另一种实现重建。
+	// 真机上就看到过这么一次误判（重跑三次都没再复现，属于瞬时抖动）。
+	// 多给几次机会，比"宁可错杀"划算得多。
+	verifyAttempts = 3
+	verifyGap      = 1500 * time.Millisecond
+
+	// verifyBudget 是验证**一个候选后端**的总预算（含重试与间隔）。
+	verifyBudget = 40 * time.Second
 )
 
 // anyPrefix4 / anyPrefix6 是两族的全量 AllowedIPs。
@@ -63,6 +75,14 @@ type ensureOptions struct {
 	// Backend 是**用户请求的**后端；空值（BackendAuto）表示由程序决定 ——
 	// 见 resolveBackends。实际用上的那个由 ensureTunnel 逐个尝试后确定。
 	Backend tunnel.Backend
+
+	// ProbeAfterEnsure：建好之后要不要立刻验证"经隧道真的能出网"。
+	//
+	// `up` 打开它（用户要的是"能用"，而且一旦不能用就该去试另一个后端）；
+	// `watch` **关闭**它 —— 巡检刚从"不通"里恢复，立刻再探一次既是重复劳动，
+	// 也会把"我已经把它修好了"误报成"修不好"（它下一轮本来就会体检）。
+	// 全局模式不需要它：那边自带自检。
+	ProbeAfterEnsure bool
 
 	// Force 表示先拆再建（无条件重建）。
 	Force bool
@@ -107,23 +127,30 @@ type ensureResult struct {
 
 // resolveBackends 决定这次按什么顺序尝试隧道后端。
 //
-// 三条规则，对应三种用户意图：
+// 四条规则，对应四种情形：
 //
 //  1. 用户显式指定了后端 → 只有一个候选，**不做任何回落**。回落会让
 //     `--backend kernel` 变成一个"建议"，用户看到的状态就与命令行说的不一样了。
 //  2. 没指定、且账户没有 reserved → 内核。行为与 M2/M4 逐字节一致。
 //  3. 没指定、且账户带 reserved → 内核优先，用户态作为备选。
+//  4. 没指定、带 reserved、且**现在跑着的就是用户态** → 用户态优先。
 //
-// 第三条是"reserved 一等公民"的落地方式：reserved 是这台设备在握手报文里
-// 应该带的 3 个字节，只有用户态后端带得上；但它只在部分地区是**必需**的，
-// 而用户态的性能明显不如内核。所以先用内核试、实测不通再切 ——
-// 而不是一上来就为了一种"可能并不存在"的限制放弃内核。
-func resolveBackends(requested tunnel.Backend, r cloudflare.Reserved) []tunnel.Backend {
+// 第 4 条是第 3 条的补充，也是真机验收逼出来的：`up` 与 `watch` 每次都会
+// 重新决策一遍，如果顺序永远固定成"内核优先"，那么一台**只能用用户态**的机器
+// 每修一次链路就要先把可用的用户态隧道拆掉、去试一个已知不通的内核后端、
+// 验证失败后再拆掉重建回用户态 —— 多花一倍时间，还平白重建一次接口。
+//
+// 于是 auto 的语义精确表述为"**在两种后端之间自适应**"，而不是"永远先试内核"。
+// 想换回内核随时可以 `up --backend kernel` 或 `switch --backend kernel`。
+func resolveBackends(requested tunnel.Backend, r cloudflare.Reserved, current tunnel.Backend) []tunnel.Backend {
 	if requested.Valid() {
 		return []tunnel.Backend{requested}
 	}
 	if r.IsZero() {
 		return []tunnel.Backend{tunnel.BackendKernel}
+	}
+	if current == tunnel.BackendUserspace {
+		return []tunnel.Backend{tunnel.BackendUserspace, tunnel.BackendKernel}
 	}
 	return []tunnel.Backend{tunnel.BackendKernel, tunnel.BackendUserspace}
 }
@@ -152,7 +179,17 @@ func backendLabel(be tunnel.Backend) string {
 // 只有"候选不止一个"时才会在成功之后多做一次体检 —— 单候选的机器
 // （也就是所有不带 reserved 的机器）行为与 M2/M4 完全一致，不多花一毫秒。
 func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt ensureOptions) (*ensureResult, int) {
-	cands := resolveBackends(opt.Backend, acct.Reserved)
+	// auto 会沿用"现在跑着的那个后端"（见 resolveBackends 的第 4 条）。
+	// 读不到运行态（第一次运行、刚 down 过）就当没有偏好。
+	current := tunnel.BackendAuto
+	if rt, err := state.LoadRuntime(state.RuntimePath()); err == nil {
+		current = tunnel.Backend(rt.Backend)
+	}
+	cands := resolveBackends(opt.Backend, acct.Reserved, current)
+	// 只有"要在多种后端之间做选择"时才在成功之后多探一次；
+	// 单候选（含用户钉死后端）与全局模式的机器完全不多花这一毫秒。
+	probe := opt.ProbeAfterEnsure && len(cands) > 1 && opt.Mode != netcfg.ModeGlobal
+
 	for i, be := range cands {
 		cur := opt
 		if i > 0 {
@@ -176,8 +213,7 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 			continue
 		}
 
-		// 单候选，或全局模式（它自己的自检已经验过链路），到此为止。
-		if len(cands) == 1 || opt.Mode == netcfg.ModeGlobal {
+		if !probe {
 			return res, exitOK
 		}
 
@@ -192,6 +228,7 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 		}
 
 		if i == len(cands)-1 {
+			// 最后一个候选也验不过 —— 如实说不通，而不是"命令成功但网不通"。
 			a.log.Errorf("%s", msg.Tf(msg.KeyUpBackendUnfitAll, err))
 			return nil, exitUnhealthy
 		}
@@ -357,8 +394,12 @@ func (a *app) ensureTunnelOnce(ctx context.Context, acct *cloudflare.Account, op
 
 // verifyViaTunnel 在隧道刚建好之后做一次只读体检：至少一族能经接口拿到 warp=on。
 //
-// 它只在"候选不止一个后端"时被调用 —— 也就是只有带 reserved 的账户会多花
-// 这几秒钟。理由很直接：那种账户才有"这个后端到底行不行"的问题要回答。
+// 它只在"候选不止一个后端"且调用方要求体检时被调用 —— 也就是只有带 reserved 的
+// 账户在 `up` / `switch` 时会多花这几秒钟。理由很直接：那种账户才有
+// "这个后端到底行不行"的问题要回答。
+//
+// 会重试（见 verifyAttempts）：这里的结论会直接决定"要不要换一个后端重建"，
+// 而误判的代价是拆掉一条本来可用的隧道。
 func (a *app) verifyViaTunnel(ctx context.Context, acct *cloudflare.Account, res *ensureResult) (string, error) {
 	if res == nil || res.Plan == nil {
 		return "", errors.New("缺少网络计划，无法体检")
@@ -367,16 +408,31 @@ func (a *app) verifyViaTunnel(ctx context.Context, acct *cloudflare.Account, res
 	if len(families) == 0 {
 		families = accountFamilies(acct)
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, selfCheckBudget)
+	ctx, cancel := context.WithTimeout(ctx, verifyBudget)
 	defer cancel()
-	r, err := health.ProbeAny(probeCtx, families, health.Options{
-		Interface: res.Plan.IfName,
-		Timeout:   verifyTimeout,
-	})
-	if err != nil {
-		return "", err
+
+	var last error
+	for i := 0; i < verifyAttempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return "", last
+			case <-time.After(verifyGap):
+			}
+		}
+		r, err := health.ProbeAny(ctx, families, health.Options{
+			Interface: res.Plan.IfName,
+			Timeout:   verifyTimeout,
+		})
+		if err == nil {
+			if i > 0 {
+				a.log.Debugf("第 %d 次体检才通过（前几次是瞬时抖动）", i+1)
+			}
+			return r.String(), nil
+		}
+		last = err
 	}
-	return r.String(), nil
+	return "", last
 }
 
 // say 按 Quiet 决定是 info 还是 debug。

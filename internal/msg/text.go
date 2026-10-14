@@ -139,6 +139,7 @@ var text = map[string]string{
 	KeyStatusNoHandshake: "尚未握手",
 	KeyStatusDaemon:      "用户态守护进程: %s（PID %d）",
 	KeyStatusDaemonNone:  "用户态守护进程: 未运行",
+	KeyStatusResvKernel:  "（内核后端在报文里发的是 0, 0, 0）",
 
 	KeyNetRemovedRule: "已删除规则: %s",
 	KeyNetAddedRule:   "已添加规则: %s",

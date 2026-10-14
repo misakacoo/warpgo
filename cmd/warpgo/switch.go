@@ -119,6 +119,8 @@ func (a *app) cmdSwitch(args []string) int {
 		DNS:          splitList(dnsStr),
 		Force:        true,
 		GuardTimeout: rollback.DefaultTimeout,
+		// 互换之后要能用 —— 用不上就该在这里说清楚，而不是等下一轮巡检才发现。
+		ProbeAfterEnsure: true,
 	}
 	if _, code := a.ensureTunnel(ctx, acct, opt); code != exitOK {
 		return code

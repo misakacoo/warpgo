@@ -151,7 +151,25 @@ func (a *app) cmdRotate(args []string) int {
 
 	a.log.Infof("%s", msg.T(msg.KeyRotateRebuild))
 	res, code := a.ensureTunnel(upCtx, picked, opt)
+	var verifyDetail string
 	if code == exitOK {
+		// **必须自己验一次**，不能只看 ensureTunnel 的退出码：
+		// 非全局模式的 up 本来就不探连通性（那是 M2 的既定语义），
+		// 而且用户可能把后端钉死了（那时不会触发自动切换里的那次验证）。
+		// 而 rotate 的全部安全承诺都建立在"新账户确实能用"之上 ——
+		// 验不过就退回原账户，绝不把一份没验证过的凭据写进磁盘。
+		detail, verr := a.verifyViaTunnel(upCtx, picked, res)
+		if verr != nil {
+			a.log.Errorf("%s", msg.Tf(msg.KeyUpCheckFail, verr))
+			code = exitUnhealthy
+		} else {
+			verifyDetail = detail
+		}
+	}
+	if code == exitOK {
+		if verifyDetail != "" {
+			a.log.Infof("%s", msg.Tf(msg.KeyUpCheckOK, verifyDetail))
+		}
 		// ③ 只有隧道真的通了才把磁盘上的账户换成新的。
 		//
 		// 顺序不能反：先落盘再验证的话，一次换 IP 失败会留下"磁盘上是新账户、

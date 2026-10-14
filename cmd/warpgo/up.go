@@ -93,6 +93,8 @@ func (a *app) cmdUp(args []string) int {
 		Force:        force,
 		GuardTimeout: guardTimeout,
 		NoConfirm:    noConfirm,
+		// 用户要的是"能用"：建好之后立刻验一次，不通就去试另一个后端。
+		ProbeAfterEnsure: true,
 		// 手工 up 不做"配置一致也硬复位"——那是保活的判断（见 ResetIfIdle）。
 		// 用户要强制重建有 --force，语义更明确。
 		ResetIfIdle: false,

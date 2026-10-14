@@ -221,6 +221,7 @@ const (
 	// 状态：后端与 reserved（M5）
 	KeyStatusDaemon     = "status.daemon"
 	KeyStatusDaemonNone = "status.daemon_none"
+	KeyStatusResvKernel = "status.reserved_kernel_note"
 )
 
 // AllKeys 列出本文件声明的全部 key。
@@ -393,5 +394,6 @@ func AllKeys() []string {
 		KeySwitchNotDebian,
 		KeyStatusDaemon,
 		KeyStatusDaemonNone,
+		KeyStatusResvKernel,
 	}
 }

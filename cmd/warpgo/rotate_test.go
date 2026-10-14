@@ -9,8 +9,9 @@ import (
 
 // 后端候选顺序是 M5 里最关键的一条策略："reserved 一等公民"到底怎么落地。
 //
-// 逐条钉住它，是因为它同时决定了三件事：性能（能用内核就用内核）、
-// 可用性（需要 reserved 的地区要能自己找到出路）、可预期性（用户指定了就别自作主张）。
+// 逐条钉住它，是因为它同时决定了四件事：性能（能用内核就用内核）、
+// 可用性（需要 reserved 的地区要能自己找到出路）、可预期性（用户指定了就别自作主张）、
+// 以及**不重复劳动**（已经落在用户态就别每轮再拆一次去试内核）。
 func TestResolveBackends(t *testing.T) {
 	withReserved := cloudflare.Reserved{36, 212, 144}
 	zero := cloudflare.Reserved{}
@@ -19,6 +20,7 @@ func TestResolveBackends(t *testing.T) {
 		name      string
 		requested tunnel.Backend
 		reserved  cloudflare.Reserved
+		current   tunnel.Backend
 		want      []tunnel.Backend
 	}{
 		{
@@ -40,15 +42,37 @@ func TestResolveBackends(t *testing.T) {
 			want:      []tunnel.Backend{tunnel.BackendKernel},
 		},
 		{
-			name:      "auto 且带 reserved → 内核优先、用户态兜底",
+			name:      "auto 且带 reserved、当前不是用户态 → 内核优先、用户态兜底",
 			requested: tunnel.BackendAuto,
 			reserved:  withReserved,
+			current:   tunnel.BackendKernel,
 			want:      []tunnel.Backend{tunnel.BackendKernel, tunnel.BackendUserspace},
+		},
+		{
+			name:      "auto 且带 reserved、当前跑的就是用户态 → 沿用用户态",
+			requested: tunnel.BackendAuto,
+			reserved:  withReserved,
+			current:   tunnel.BackendUserspace,
+			want:      []tunnel.Backend{tunnel.BackendUserspace, tunnel.BackendKernel},
+		},
+		{
+			name:      "auto 且带 reserved、没有运行态（第一次）→ 内核优先",
+			requested: tunnel.BackendAuto,
+			reserved:  withReserved,
+			current:   tunnel.BackendAuto,
+			want:      []tunnel.Backend{tunnel.BackendKernel, tunnel.BackendUserspace},
+		},
+		{
+			name:      "auto、没有 reserved、当前是用户态 → 仍然只有内核",
+			requested: tunnel.BackendAuto,
+			reserved:  zero,
+			current:   tunnel.BackendUserspace,
+			want:      []tunnel.Backend{tunnel.BackendKernel},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := resolveBackends(tc.requested, tc.reserved)
+			got := resolveBackends(tc.requested, tc.reserved, tc.current)
 			if len(got) != len(tc.want) {
 				t.Fatalf("实得 %v，期望 %v", got, tc.want)
 			}

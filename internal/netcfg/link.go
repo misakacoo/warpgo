@@ -49,8 +49,14 @@ func IsNotExist(err error) bool {
 func EnsureWireGuardLink(name string, mtu int) (link netlink.Link, created bool, err error) {
 	if l, err := netlink.LinkByName(name); err == nil {
 		// 名字被别的东西占用了 —— 绝不能往上写 WARP 配置，直接拒绝。
+		//
+		// 最常见的情形其实是"上一个后端留下的接口"：用户态后端建的是 TUN，
+		// 与内核的 wireguard 是两种设备类型，同名不能共存。所以错误里必须
+		// 给出可操作的下一步，否则用户只会看到一句不知所云的"类型不对"。
 		if _, ok := l.(*netlink.Wireguard); !ok {
-			return nil, false, fmt.Errorf("接口 %s 已存在但不是 wireguard 类型（%T），拒绝复用", name, l)
+			return nil, false, fmt.Errorf(
+				"接口 %s 已存在但不是 wireguard 类型（%T）—— 它可能是用户态后端建的 TUN，"+
+					"请用 `--force` 重建，或先执行 `warpgo down`", name, l)
 		}
 		if mtu > 0 && l.Attrs().MTU != mtu {
 			if err := netlink.LinkSetMTU(l, mtu); err != nil {

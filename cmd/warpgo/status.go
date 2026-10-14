@@ -170,6 +170,11 @@ func (a *app) printStatus(rt *state.Runtime, st tunnel.Status, daemon bool, rese
 		{"interface_exists", yesNo(st.Exists)},
 	}
 	if reserved != "" {
+		// 内核后端在结构上带不了那 3 个字节 —— 把账户里的值和"实际发出去的"并排说清，
+		// 否则这一行会让人以为它正在生效。
+		if rt.Backend == string(tunnel.BackendKernel) && reserved != "0, 0, 0" {
+			reserved = fmt.Sprintf("%s %s", reserved, msg.T(msg.KeyStatusResvKernel))
+		}
 		fields = append(fields, [2]string{"reserved", reserved})
 	}
 	if rt.Backend == string(tunnel.BackendUserspace) {

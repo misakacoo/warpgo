@@ -167,27 +167,33 @@ func isOurDaemon(pid int, ifName string) bool {
 
 // StopUserspaceDaemon 停掉某个接口的用户态守护进程，并清掉它的运行期痕迹。
 //
-// 幂等：没有守护进程时什么都不做（`down` / `uninstall` 会无条件调用它）。
+// 幂等：没有守护进程时什么都不做（`down` / `uninstall` / 换后端都会无条件调用它）。
 func StopUserspaceDaemon(ifName string, logf func(string, ...any)) error {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	confirmed := true
 	if st, ok := ReadDaemonState(ifName); ok && processAlive(st.PID) {
 		switch {
 		case !isOurDaemon(st.PID, ifName):
-			// 身份对不上就不杀 —— 宁可留下一个多余的进程，也不能误杀别人的。
-			logf("PID %d 上的进程不是 warpgo 的用户态守护进程，不停止它（仅清理状态文件）", st.PID)
+			// 身份对不上就不杀 —— 状态文件里的 PID 可能早已被别的进程复用，
+			// 误杀的代价不可逆。而且这时还**不能删 socket**：真正管着这个接口的
+			// 那个进程我们还认不出来，删掉 socket 只会让它彻底失去被管理的机会。
+			logf("PID %d 上的进程不是 warpgo 的用户态守护进程，不停止它、也不动它的 socket（仅清理状态文件）", st.PID)
+			confirmed = false
 		default:
 			if err := syscall.Kill(st.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 				return fmt.Errorf("停止用户态守护进程 %d: %w", st.PID, err)
-			} else {
-				logf("已停止用户态守护进程 %d（接口 %s）", st.PID, ifName)
-				waitGone(st.PID, daemonStopTimeout)
 			}
+			logf("已停止用户态守护进程 %d（接口 %s）", st.PID, ifName)
+			waitGone(st.PID, daemonStopTimeout)
 		}
 	}
 	if err := removeDaemonState(ifName); err != nil {
 		return err
+	}
+	if !confirmed {
+		return nil
 	}
 	// socket 通常由守护进程自己摘掉；被 SIGKILL 之类强杀时可能留下来，
 	// 而残留的 socket 会让"下一次拉起"直接失败（unix socket in use）。
@@ -291,15 +297,25 @@ func (u *userspaceTunnel) ensureDaemon(ctx context.Context, name string, cfg Con
 		}
 	}
 	// 走到这里说明：没有记录、进程已死、参数不一致、或者它在应答上已经不可靠。
-	// 四种情况都按"先停干净再拉起"处理 —— 停是幂等的。
+	// 四种情况都按"先收干净再拉起"处理 —— 收是幂等的。
 	if _, err := os.Stat(DaemonStatePath(name)); err == nil {
 		if err := StopUserspaceDaemon(name, nil); err != nil {
 			return true, err
 		}
 	} else if _, err := u.client.Device(name); err == nil {
-		// 没有状态文件却有一个能应答的设备：可能是被手工清理过现场。
-		// 我们无法证明它带着正确的 reserved，所以也重来一次 ——
-		// "悄悄用着错的 reserved"比"多重建一次"危险得多。
+		// 没有状态文件，却有一个能应答的设备。两种来源：
+		//   · 被手工清理过现场的用户态守护进程；
+		//   · **内核后端**留下的接口（我们从内核切过来，`up --backend userspace`）。
+		// 两种都必须先把这个接口清掉：用户态守护进程占着 TUN 名会让新的
+		// `tun.CreateTUN` 失败；而内核设备更是我们必须替换掉的东西。
+		//
+		// 这里不能"只删 socket 了事"—— 那样守护进程还活着、还占着 TUN，
+		// 现场就卡住了；也不能按 PID 停，因为我们根本没有 PID。
+		// 唯一稳妥的收尾是删掉接口：wireguard-go 的读循环一拿到错误就会自己
+		// 关闭设备并退出进程。它与 `down` 收尾走的是同一条路。
+		if _, derr := netcfg.DeleteLink(name); derr != nil {
+			return true, derr
+		}
 		if err := StopUserspaceDaemon(name, nil); err != nil {
 			return true, err
 		}
