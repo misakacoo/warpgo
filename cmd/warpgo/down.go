@@ -7,15 +7,38 @@ import (
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/state"
+	"github.com/misakacoo/warpgo/internal/systemd"
 	"github.com/misakacoo/warpgo/internal/tunnel"
 )
 
 func (a *app) cmdDown(args []string) int {
-	var ifName string
-	opts := newOptionSet().Str("--ifname", &ifName)
+	var (
+		ifName    string
+		keepWatch bool
+	)
+	opts := newOptionSet().Str("--ifname", &ifName).Bool("--keep-watch", &keepWatch)
 	if err := opts.parse(args, a.bundle.Tf); err != nil {
 		return a.fail(err)
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), upTimeout)
+	defer cancel()
+
+	// ① 先停保活巡检。
+	//
+	// 必须排在拆隧道**之前**：保活每 5 分钟一轮，只要它还在跑，我们刚拆掉的
+	// 东西会在下一轮被它重新建起来 —— 用户看到的是"拆了又自己回来"，
+	// 而且会怀疑 down 根本没生效。
+	if !keepWatch {
+		a.stopWatchService(ctx)
+	}
+
+	// ② 拿单实例锁。放在停服务之后，才能保证拿到的是干净的。
+	lock, code := a.acquireLock()
+	if code != exitOK {
+		return code
+	}
+	defer a.releaseLock(lock)
 
 	// 接口名优先取命令行，其次取运行态，最后退回默认值 —— 三者都不依赖
 	// 「上一状态是否完好」，所以即使运行态文件已损坏也能把现场清干净。
@@ -28,16 +51,7 @@ func (a *app) cmdDown(args []string) int {
 		}
 	}
 
-	lock, code := a.acquireLock()
-	if code != exitOK {
-		return code
-	}
-	defer a.releaseLock(lock)
-
 	a.log.Infof("%s", a.bundle.T(i18n.KeyDownStart))
-
-	ctx, cancel := context.WithTimeout(context.Background(), upTimeout)
-	defer cancel()
 
 	// 顺序很重要：**先清规则与路由，再删接口**。
 	//
@@ -73,6 +87,13 @@ func (a *app) cmdDown(args []string) int {
 		a.log.Warnf("%v", err)
 	}
 
+	// ③ 还原 DNS。只在"我们确实改过它"的时候才会真的动（有备份才还原）。
+	if restored, derr := a.restoreDNS(); derr != nil {
+		a.log.Warnf("%v", derr)
+	} else if !restored {
+		a.log.Debugf("%s", a.bundle.T(i18n.KeyUninstallNoDNS))
+	}
+
 	if len(res.RulesRemoved) == 0 && res.RoutesFlushed == 0 && !deleted {
 		a.log.Infof("%s", a.bundle.T(i18n.KeyDownNothing))
 		return exitOK
@@ -83,4 +104,30 @@ func (a *app) cmdDown(args []string) int {
 	}
 	a.log.Infof("%s", a.bundle.T(i18n.KeyDownDone))
 	return exitOK
+}
+
+// stopWatchService 停掉保活单元（没装就什么都不做）。
+//
+// 停完还要 reset-failed：单元一旦被标成 failed，systemd 的 restart 语义
+// 会退化成"只重启不重载"，后续行为难以推理 —— 上游在这一处吃过亏。
+func (a *app) stopWatchService(ctx context.Context) {
+	mgr := systemd.New()
+	if !mgr.UnitExists() {
+		return
+	}
+	active, err := mgr.IsActive(ctx)
+	if err != nil {
+		a.log.Debugf("%v", err)
+		return
+	}
+	if active {
+		if err := mgr.Stop(ctx); err != nil {
+			a.log.Warnf("%v", err)
+		} else {
+			a.log.Infof("%s", a.bundle.Tf(i18n.KeyDownWatchStopped, systemd.UnitName))
+		}
+	}
+	if err := mgr.ResetFailed(ctx); err != nil {
+		a.log.Debugf("%v", err)
+	}
 }

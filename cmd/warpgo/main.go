@@ -77,6 +77,12 @@ func run(args []string) int {
 		return a.cmdDown(cmdArgs)
 	case "status":
 		return a.cmdStatus(cmdArgs)
+	case "watch":
+		return a.cmdWatch(cmdArgs)
+	case "install":
+		return a.cmdInstall(cmdArgs)
+	case "uninstall":
+		return a.cmdUninstall(cmdArgs)
 	case "confirm":
 		return a.cmdConfirm(cmdArgs)
 	case "rollback-guard":

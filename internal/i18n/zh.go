@@ -3,32 +3,41 @@ package i18n
 // zh 中文文案。
 var zh = map[string]string{
 	KeyUsage: `warpgo —— Debian 上的 Cloudflare WARP 管理工具
-（fscarmen/warp 的 Go 重写版；仅支持 Debian，不含 Docker，不适配其他平台）
+（fscarmen/warp 的 Go 重写版；只支持 Debian，不含 Docker，不适配其他平台）
 
 用法:
   warpgo <子命令> [选项]
 
-子命令:
-  register             注册新的 WARP 设备并保存账户
-  account              显示已保存的账户（--refresh 从服务端拉最新）
-  profile              为已保存的账户输出一份 wg-quick 配置
-  version              显示版本信息
+账户:
+  register             注册一个新的 WARP 设备并保存账户
+  account              查看本机账户（--refresh 从服务端拉取最新）
+  profile              输出可直接交给 wg-quick 的配置（逃生口）
+
+隧道:
+  up                   建立隧道（幂等；--mode global 为全局接管）
+  down                 拆除隧道并清空全部残留
+  status               查看当前状态（--json 给脚本用）
+
+保活:
+  watch                巡检：健康就不动，断了才重建
+  install              把保活装成 systemd 服务（开机自启 + 立即启动）
+  uninstall            撤干净：单元、隧道、二进制、DNS 改动
+  confirm              保留本次变更并解除回滚保险丝
+
+其他:
+  version              显示版本信息（--check 会去 GitHub 查新版本）
   help                 显示本帮助
   dev lock             演练单实例锁（开发调试用）
-  dev platform         检查是否为 Debian 系统
+  dev platform         检查本机是否 Debian
 
 全局选项:
   --lang en|zh         强制输出语言（默认按 LANG 推断）
   -v, --verbose        调试日志
   -q, --quiet          只显示警告与错误
 
-计划中的子命令（按里程碑逐步实现）:
-  up  down  status  watch  rotate  switch  priority
-  split  proxy  client  bbr  uninstall  version --check
-
 退出码:
-  0 成功   1 通用错误   2 体检不健康   3 需要 reserved 但后端不支持
-  4 已有实例在运行   5 不是 Debian 系统`,
+  0 成功   1 通用错误   2 不健康   3 需要 reserved
+  4 已有实例在运行   5 非 Debian 系统`,
 
 	KeyVersion:   "warpgo",
 	KeyUnknownCm: "未知子命令: %s",
@@ -77,17 +86,17 @@ var zh = map[string]string{
 	KeyProfTableOffHint: "Table = off：本配置不接管任何路由。IPv4 仍可用，因为接口持有地址、内核允许按出接口直发；" +
 		"IPv6 必须有明确路由（M2 的非全局模式会负责这件事）。",
 
-	KeyUpStart:        "正在建立 WARP 隧道（模式 %s，接口 %s）",
-	KeyUpLinkCreated:  "已创建接口 %s（MTU %d）",
-	KeyUpLinkReused:   "接口 %s 已存在，直接复用（不重建、不换 IP）",
-	KeyUpAddrs:        "接口地址: %s",
-	KeyUpConfigured:   "已下发 WireGuard 配置",
-	KeyUpCfgMatched:   "WireGuard 配置已是最新，未重新下发（避免无谓的重握手）",
-	KeyUpNetcfg:       "已应用网络配置: %d 条路由、%d 条规则",
-	KeyUpCleaned:      "先清理了 %d 条旧规则",
-	KeyUpForce:        "--force：会先拆掉现有隧道再重建",
-	KeyUpDone:         "WARP 隧道已就绪（%s 模式）",
-	KeyUpNotDebian:    "建立隧道会改动系统网络，因此拒绝在 %s 上运行",
+	KeyUpStart:       "正在建立 WARP 隧道（模式 %s，接口 %s）",
+	KeyUpLinkCreated: "已创建接口 %s（MTU %d）",
+	KeyUpLinkReused:  "接口 %s 已存在，直接复用（不重建、不换 IP）",
+	KeyUpAddrs:       "接口地址: %s",
+	KeyUpConfigured:  "已下发 WireGuard 配置",
+	KeyUpCfgMatched:  "WireGuard 配置已是最新，未重新下发（避免无谓的重握手）",
+	KeyUpNetcfg:      "已应用网络配置: %d 条路由、%d 条规则",
+	KeyUpCleaned:     "先清理了 %d 条旧规则",
+	KeyUpForce:       "--force：会先拆掉现有隧道再重建",
+	KeyUpDone:        "WARP 隧道已就绪（%s 模式）",
+	KeyUpNotDebian:   "建立隧道会改动系统网络，因此拒绝在 %s 上运行",
 
 	KeyDownStart:   "正在拆除 WARP 隧道",
 	KeyDownNothing: "没有需要拆除的东西（接口、残留规则与路由都不存在）",
@@ -118,7 +127,7 @@ var zh = map[string]string{
 	KeyGuardRBDone:    "回滚完成：网络已回到没有 WARP 隧道的状态",
 	KeyGuardNote:      "（细节）%s",
 
-	KeyConfirmOK: "已确认配置可用，保险丝解除",
+	KeyConfirmOK:   "已确认配置可用，保险丝解除",
 	KeyConfirmNone: "当前没有待确认的变更（没有未确认的改动）",
 
 	KeyUpGlobalStart:  "正在启用全局模式（所有流量将走 WARP）",
@@ -129,6 +138,50 @@ var zh = map[string]string{
 	KeyUpRollingBack:  "正在回滚到变更前的状态",
 	KeyUpNoConfirm:    "--no-confirm：配置已应用但未确认；%s 内不执行 `warpgo confirm` 就会自动回滚",
 	KeyUpGlobalDone:   "全局模式已生效（所有流量经 WARP）",
+
+	KeyWatchStart:      "保活巡检已启动：每 %s 一次（接口 %s，模式 %s）",
+	KeyWatchRound:      "第 %d 轮",
+	KeyWatchHealthy:    "链路正常（%s）—— 未做任何改动",
+	KeyWatchUnhealthy:  "链路已断：%v —— 开始重建",
+	KeyWatchRebuilding: "正在重建隧道",
+	KeyWatchRebuilt:    "已重建：%s",
+	KeyWatchFailed:     "重建失败：%v（下一轮会重试 —— 进程刻意不退出）",
+	KeyWatchLocked:     "第 %d 轮跳过：单实例锁被别的进程持有",
+	KeyWatchStopped:    "巡检结束：共 %d 轮 —— 健康 %d、重建 %d、失败 %d、跳过 %d",
+	KeyWatchNotDebian:  "保活会建立隧道并改动系统网络，因此拒绝在 %s 上运行",
+
+	KeyUpHardReset: "接口与配置都正常但链路不通 —— 硬复位以强制重新握手（出口 IP 不变，变的只是这一次握手）",
+
+	KeyDNSSet:      "已将 nameserver 设置为 %s",
+	KeyDNSBackup:   "原始 resolv.conf 已备份到 %s",
+	KeyDNSRestored: "已从备份还原 %s",
+	KeyDNSSymlink:  "%s 是符号链接（多半由 systemd-resolved 管理），拒绝覆盖它",
+
+	KeyInstallNotDebian:  "装上去的服务会自动改动系统网络，因此拒绝在 %s 上运行",
+	KeyInstallBinary:     "已安装 %s -> %s",
+	KeyInstallBinarySame: "%s 已经就是当前运行的二进制 —— 未改动",
+	KeyInstallUnit:       "已写入单元 %s",
+	KeyInstallEnabled:    "已启用 %s（开机自启）",
+	KeyInstallNoStart:    "--no-start：未启动 %s",
+	KeyInstallStarted:    "已启动 %s",
+	KeyInstallDone:       "安装完成：%s 将每 %s 巡检一次链路",
+	KeyPurgeRefused:      "拒绝清理 %s：里面有 warpgo 不认识的文件（%s）—— 确认要删请先自己处理它们",
+
+	KeyUninstallStopped:       "已停止 %s",
+	KeyUninstallDisabled:      "已禁用 %s",
+	KeyUninstallUnitRemoved:   "已删除单元 %s",
+	KeyUninstallNoUnit:        "%s 处没有单元文件 —— 无需停止",
+	KeyUninstallLockBusy:      "另有实例持有单实例锁（可能正在手工 up/down）；仍继续卸载",
+	KeyUninstallTornDown:      "隧道已拆除；规则、路由与运行态均已清理",
+	KeyUninstallNoDNS:         "没有 resolv.conf 备份 —— warpgo 从未改过 DNS",
+	KeyUninstallBinaryRemoved: "已删除 %s",
+	KeyUninstallNoBinary:      "%s 本来就不存在",
+	KeyUninstallKeptBinary:    "--keep-binary：保留 %s",
+	KeyUninstallStateKept:     "已保留 %s（里面有你的 WARP 账户；要一并删除用 --purge）",
+	KeyUninstallStatePurged:   "已删除 %s（%d 个文件）",
+	KeyUninstallDone:          "卸载完成",
+
+	KeyDownWatchStopped: "已停止保活服务 %s（否则它下一轮会把隧道重新建起来）",
 
 	KeyPlatformDebian:   "系统检查: Debian %s",
 	KeyPlatformNotDebia: "本命令只支持 Debian（检测到: %s）",

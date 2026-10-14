@@ -155,12 +155,12 @@ func TestBuildHonoursOverrides(t *testing.T) {
 
 func TestParseMode(t *testing.T) {
 	ok := map[string]Mode{
-		"":            ModeNonGlobal,
-		"non-global":  ModeNonGlobal,
-		"nonglobal":   ModeNonGlobal,
-		"non_global":  ModeNonGlobal,
-		"  GLOBAL  ":  ModeGlobal,
-		"global":      ModeGlobal,
+		"":           ModeNonGlobal,
+		"non-global": ModeNonGlobal,
+		"nonglobal":  ModeNonGlobal,
+		"non_global": ModeNonGlobal,
+		"  GLOBAL  ": ModeGlobal,
+		"global":     ModeGlobal,
 	}
 	for in, want := range ok {
 		got, err := ParseMode(in)

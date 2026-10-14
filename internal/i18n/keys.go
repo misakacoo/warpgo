@@ -48,17 +48,17 @@ const (
 	KeyNeedRoot = "state.need_root"
 
 	// 建立隧道（M2）
-	KeyUpStart        = "up.start"
-	KeyUpLinkCreated  = "up.link_created"
-	KeyUpLinkReused   = "up.link_reused"
-	KeyUpAddrs        = "up.addresses"
-	KeyUpConfigured   = "up.configured"
-	KeyUpCfgMatched   = "up.config_matched"
-	KeyUpNetcfg       = "up.netcfg_applied"
-	KeyUpCleaned      = "up.cleaned_old"
-	KeyUpForce        = "up.force_teardown"
-	KeyUpDone         = "up.done"
-	KeyUpNotDebian    = "up.not_debian"
+	KeyUpStart       = "up.start"
+	KeyUpLinkCreated = "up.link_created"
+	KeyUpLinkReused  = "up.link_reused"
+	KeyUpAddrs       = "up.addresses"
+	KeyUpConfigured  = "up.configured"
+	KeyUpCfgMatched  = "up.config_matched"
+	KeyUpNetcfg      = "up.netcfg_applied"
+	KeyUpCleaned     = "up.cleaned_old"
+	KeyUpForce       = "up.force_teardown"
+	KeyUpDone        = "up.done"
+	KeyUpNotDebian   = "up.not_debian"
 
 	// 拆除隧道（M2）
 	KeyDownStart   = "down.start"
@@ -113,6 +113,56 @@ const (
 	KeyProfSkipped      = "profile.skipped"
 	KeyProfKernelWarn   = "profile.kernel_reserved_warning"
 	KeyProfTableOffHint = "profile.table_off_hint"
+
+	// 保活巡检（M4）
+	KeyWatchStart      = "watch.start"
+	KeyWatchRound      = "watch.round"
+	KeyWatchHealthy    = "watch.healthy"
+	KeyWatchUnhealthy  = "watch.unhealthy"
+	KeyWatchRebuilding = "watch.rebuilding"
+	KeyWatchRebuilt    = "watch.rebuilt"
+	KeyWatchFailed     = "watch.rebuild_failed"
+	KeyWatchLocked     = "watch.locked"
+	KeyWatchStopped    = "watch.stopped"
+	KeyWatchNotDebian  = "watch.not_debian"
+
+	// 硬复位（M4）
+	KeyUpHardReset = "up.hard_reset"
+
+	// DNS 备份与还原（M4）
+	KeyDNSSet      = "dns.set"
+	KeyDNSBackup   = "dns.backup"
+	KeyDNSRestored = "dns.restored"
+	KeyDNSSymlink  = "dns.symlink"
+
+	// 安装（M4）
+	KeyInstallNotDebian  = "install.not_debian"
+	KeyInstallBinary     = "install.binary"
+	KeyInstallBinarySame = "install.binary_same"
+	KeyInstallUnit       = "install.unit_written"
+	KeyInstallEnabled    = "install.enabled"
+	KeyInstallNoStart    = "install.no_start"
+	KeyInstallStarted    = "install.started"
+	KeyInstallDone       = "install.done"
+	KeyPurgeRefused      = "install.purge_refused"
+
+	// 卸载（M4）
+	KeyUninstallStopped       = "uninstall.stopped"
+	KeyUninstallDisabled      = "uninstall.disabled"
+	KeyUninstallUnitRemoved   = "uninstall.unit_removed"
+	KeyUninstallNoUnit        = "uninstall.no_unit"
+	KeyUninstallLockBusy      = "uninstall.lock_busy"
+	KeyUninstallTornDown      = "uninstall.torn_down"
+	KeyUninstallNoDNS         = "uninstall.no_dns_backup"
+	KeyUninstallBinaryRemoved = "uninstall.binary_removed"
+	KeyUninstallNoBinary      = "uninstall.binary_missing"
+	KeyUninstallKeptBinary    = "uninstall.binary_kept"
+	KeyUninstallStateKept     = "uninstall.state_kept"
+	KeyUninstallStatePurged   = "uninstall.state_purged"
+	KeyUninstallDone          = "uninstall.done"
+
+	// 拆除时的保活联动（M4）
+	KeyDownWatchStopped = "down.watch_stopped"
 
 	// 平台
 	KeyPlatformDebian   = "platform.debian"

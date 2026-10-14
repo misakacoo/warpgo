@@ -28,11 +28,11 @@ import (
 // 运行时文件都放在 /run 下：重启即失效，这正是我们要的语义 ——
 // 一个跨越重启还活着的"待回滚"状态只会带来困惑。
 const (
-	runDirName    = "warpgo"
-	snapshotFile  = "rollback.json"
-	confirmFile   = "rollback.confirm"
-	guardLogFile  = "guard.log"
-	pollInterval  = 500 * time.Millisecond
+	runDirName   = "warpgo"
+	snapshotFile = "rollback.json"
+	confirmFile  = "rollback.confirm"
+	guardLogFile = "guard.log"
+	pollInterval = 500 * time.Millisecond
 	// DefaultTimeout 是默认的确认窗口。
 	//
 	// 45 秒是个折中：up 的自检（两次网络探测 + 一次路径检查）最坏约 25 秒，

@@ -1,0 +1,594 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/netip"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/misakacoo/warpgo/internal/cloudflare"
+	"github.com/misakacoo/warpgo/internal/health"
+	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/netcfg"
+	"github.com/misakacoo/warpgo/internal/rollback"
+	"github.com/misakacoo/warpgo/internal/state"
+	"github.com/misakacoo/warpgo/internal/tunnel"
+	"github.com/misakacoo/warpgo/internal/wgconf"
+)
+
+const (
+	// upTimeout 覆盖"建接口 + 下发配置 + 配路由"，不含后续的联网探测。
+	upTimeout = 90 * time.Second
+
+	// defaultKeepalive 是 WireGuard 的持久保活间隔。WARP 的 NAT 映射存活时间很短，
+	// 25 秒是上游与整个生态的共识值。
+	defaultKeepalive = 25 * time.Second
+
+	// selfCheckBudget 是自检的总预算。
+	//
+	// 它必须明显小于保险丝的超时（45s），否则会出现"自检还没跑完、保险丝先拉闸"
+	// 的竞态 —— 那样的失败看起来像随机断网，非常难排查。
+	selfCheckBudget = 25 * time.Second
+)
+
+// anyPrefix4 / anyPrefix6 是两族的全量 AllowedIPs。
+var (
+	anyPrefix4 = netip.MustParsePrefix("0.0.0.0/0")
+	anyPrefix6 = netip.MustParsePrefix("::/0")
+)
+
+// ensureOptions 是一次"让隧道达到期望状态"的全部参数。
+//
+// `up` 与 `watch` 共用同一份：两条路径必须走**完全一样**的代码 ——
+// 否则"手工执行能修好、保活却修不好"这类偏差迟早会出现，而且极难发现。
+type ensureOptions struct {
+	IfName   string
+	Mode     netcfg.Mode
+	MTU      int
+	Endpoint string
+
+	// Force 表示先拆再建（无条件重建）。
+	Force bool
+
+	// GuardTimeout 是全局模式回滚保险丝的超时。
+	GuardTimeout time.Duration
+
+	// NoConfirm 表示全局模式应用后不自动确认（把决定权留给用户）。
+	NoConfirm bool
+
+	// NoFuse 关闭全局模式的保险丝。只用于测试；生产路径永远开着。
+	NoFuse bool
+
+	// Quiet 把"例行公事"的日志降到 debug —— 保活每 5 分钟跑一次，
+	// 每次都刷一遍"已添加规则"会把 journal 淹没，真正的异常反而看不见。
+	Quiet bool
+
+	// ResetIfIdle：当接口在、配置也完全一致、但链路依然不通时，
+	// 做一次硬复位强制重新握手。
+	//
+	// 这正是"断链才重建"里"重建"的含义。没有它，保活就只会重建
+	// **被删掉的**接口 —— 而现实中最常见的故障是"接口好好的、就是不通"。
+	ResetIfIdle bool
+
+	// DNS 非空时把 /etc/resolv.conf 换成这些服务器（会先备份原文）。
+	DNS []string
+}
+
+// ensureResult 记录这次做到了什么。
+type ensureResult struct {
+	Plan   *netcfg.Plan
+	Change tunnel.Change
+	Net    *netcfg.Result
+	RT     *state.Runtime
+	// HardReset 报告是否做过硬复位。
+	HardReset bool
+	// Detail 是一行摘要（给日志与保活用）。
+	Detail string
+}
+
+// ensureTunnel 把系统带到"隧道可用"的状态。
+//
+// 它**不取单实例锁** —— 锁由调用方（up / watch）持有，因为持锁的粒度
+// 是"一次完整的动作"，而不是"其中一段"。调用方拿不到锁时不应该进到这里。
+func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt ensureOptions) (*ensureResult, int) {
+	if opt.IfName == "" {
+		opt.IfName = netcfg.DefaultIfName
+	}
+	if opt.MTU == 0 {
+		opt.MTU = netcfg.DefaultMTU
+	}
+
+	cfg, plan, rtState, err := buildTunnel(acct, opt)
+	if err != nil {
+		return nil, a.fail(err)
+	}
+
+	// 上一次变更可能留下了还在等待的保险丝（比如上次自检失败但进程还没退出）：
+	// 先解除它。否则它会在超时后把**这次**刚建立的东西拆掉，
+	// 表现成"莫名其妙掉线"，而且极难排查。
+	if derr := rollback.Disarm(); derr != nil {
+		a.log.Warnf("%v", derr)
+	}
+
+	guardTimeout := opt.GuardTimeout
+	if guardTimeout <= 0 {
+		guardTimeout = rollback.DefaultTimeout
+	}
+	useFuse := opt.Mode == netcfg.ModeGlobal && !opt.NoFuse
+
+	// ★ 全局模式的前置：**先上保险，再动网络**。
+	//
+	// 顺序不能反。保险丝的整个意义就是"当变更把网络弄断时，还有人在数秒后拉闸"；
+	// 如果先改网络再派生保险丝，那么断网那一刻保险丝还没出生，等于没有保险。
+	var snap *rollback.Snapshot
+	if useFuse {
+		if snap, err = newSnapshot(cfg.IfName, plan); err != nil {
+			return nil, a.fail(err)
+		}
+		if err := rollback.ClearConfirm(); err != nil {
+			return nil, a.fail(err)
+		}
+		if err := snap.Save(rollback.SnapshotPath()); err != nil {
+			return nil, a.fail(err)
+		}
+		if err := a.spawnGuard(guardTimeout); err != nil {
+			return nil, a.fail(err)
+		}
+		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyUpGuardSpawned, guardTimeout))
+		a.log.Warnf("%s", a.bundle.T(i18n.KeyUpGlobalStart))
+	}
+
+	if opt.Force {
+		a.say(opt.Quiet, i18n.KeyUpForce)
+		if err := a.tearDown(ctx, cfg.IfName); err != nil {
+			a.log.Warnf("%v", err)
+		}
+	}
+
+	a.say(opt.Quiet, i18n.KeyUpStart, opt.Mode, cfg.IfName)
+
+	tun, err := tunnel.NewKernel(cfg.IfName)
+	if err != nil {
+		return nil, a.fail(err)
+	}
+	defer tun.Close()
+
+	ch, err := tun.Ensure(ctx, cfg)
+	if err != nil {
+		return nil, a.fail(err)
+	}
+	a.reportChange(opt.Quiet, ch, cfg)
+
+	// 接口在、配置也对，但链路就是不通 —— 这是最常见的故障形态
+	// （WARP 把当前握手黑洞掉了）。这时唯一的解法是硬复位一次，
+	// 逼它重新握手。注意：出口 IP 不会因此改变 —— 它是账户里分配的固定地址，
+	// 变的只是这一次握手。
+	res := &ensureResult{Plan: plan, Change: ch}
+	if opt.ResetIfIdle && !ch.LinkCreated && ch.ConfigMatched {
+		a.say(opt.Quiet, i18n.KeyUpHardReset)
+		if err := a.tearDown(ctx, cfg.IfName); err != nil {
+			return nil, a.fail(err)
+		}
+		if ch, err = tun.Ensure(ctx, cfg); err != nil {
+			return nil, a.fail(err)
+		}
+		a.reportChange(opt.Quiet, ch, cfg)
+		res.HardReset = true
+		res.Change = ch
+	}
+
+	nres, err := netcfg.Apply(plan, a.netlog)
+	if err != nil {
+		return nil, a.fail(err)
+	}
+	res.Net = nres
+	if len(nres.RulesRemoved) > 0 {
+		a.say(opt.Quiet, i18n.KeyUpCleaned, len(nres.RulesRemoved))
+	}
+	a.say(opt.Quiet, i18n.KeyUpNetcfg, nres.RoutesAdded, nres.RulesAdded)
+	a.say(opt.Quiet, i18n.KeyUpAddrs, strings.Join(plan.AddrStrings(), ", "))
+
+	if len(opt.DNS) > 0 {
+		if err := a.applyDNS(opt.DNS); err != nil {
+			return nil, a.fail(err)
+		}
+		a.log.Infof("%s", a.bundle.Tf(i18n.KeyDNSSet, strings.Join(opt.DNS, ", ")))
+	}
+
+	if err := rtState.Save(state.RuntimePath()); err != nil {
+		return nil, a.fail(err)
+	}
+	res.RT = rtState
+
+	if useFuse {
+		if code := a.finishGlobal(ctx, snap, plan, guardTimeout, opt.NoConfirm); code != exitOK {
+			return nil, code
+		}
+	}
+
+	res.Detail = a.bundle.Tf(i18n.KeyUpDone, opt.Mode)
+	return res, exitOK
+}
+
+// say 按 Quiet 决定是 info 还是 debug。
+//
+// 保活每 5 分钟跑一轮，例行成功的输出如果都用 info，journal 会被
+// "已添加规则…" 淹没；而真正要看"它到底做了什么"的时候，`-v` 就能看到全部。
+func (a *app) say(quiet bool, key string, args ...any) {
+	if quiet {
+		a.log.Debugf("%s", a.bundle.Tf(key, args...))
+		return
+	}
+	a.log.Infof("%s", a.bundle.Tf(key, args...))
+}
+
+// buildTunnel 把账户翻译成「隧道参数 + 期望网络状态 + 运行态」。
+//
+// 三样东西一起产出，是因为它们必须来自同一次解析 —— 分开算容易出现
+// "隧道用一个端点、运行态里记另一个"这种对不上的情况。
+func buildTunnel(acct *cloudflare.Account, opt ensureOptions) (tunnel.Config, *netcfg.Plan, *state.Runtime, error) {
+	var zeroCfg tunnel.Config
+
+	priv, err := wgconf.ParseKey(acct.PrivateKey)
+	if err != nil {
+		return zeroCfg, nil, nil, fmt.Errorf("账户里的私钥不可用: %w", err)
+	}
+	pub, err := wgconf.ParseKey(acct.PublicKey)
+	if err != nil {
+		return zeroCfg, nil, nil, fmt.Errorf("账户里的公钥不可用: %w", err)
+	}
+	peer, err := wgconf.ParseKey(acct.PeerPublicKey)
+	if err != nil {
+		return zeroCfg, nil, nil, fmt.Errorf("账户里的对端公钥不可用: %w", err)
+	}
+
+	addrs, err := accountPrefixes(acct)
+	if err != nil {
+		return zeroCfg, nil, nil, err
+	}
+
+	endpoint := strings.TrimSpace(opt.Endpoint)
+	if endpoint == "" {
+		endpoint = acct.PreferredEndpoint()
+	}
+	if endpoint == "" {
+		return zeroCfg, nil, nil, errors.New("账户里没有可用的对端端点")
+	}
+
+	cfg := tunnel.Config{
+		IfName:        opt.IfName,
+		PrivateKey:    priv,
+		PublicKey:     pub,
+		PeerPublicKey: peer,
+		Endpoint:      endpoint,
+		AllowedIPs:    defaultAllowedIPs(addrs),
+		Keepalive:     defaultKeepalive,
+		MTU:           opt.MTU,
+		Addresses:     addrs,
+	}
+
+	plan, err := netcfg.Build(addrs, netcfg.Options{IfName: opt.IfName, MTU: opt.MTU, Mode: opt.Mode})
+	if err != nil {
+		return zeroCfg, nil, nil, err
+	}
+	// 全局模式要求隧道自己打 fwmark，否则封装包会被自己的规则送进隧道（死循环）。
+	cfg.FWMark = plan.FWMark
+
+	rtState := &state.Runtime{
+		IfName:   opt.IfName,
+		Mode:     string(opt.Mode),
+		Backend:  string(tunnel.BackendKernel),
+		MTU:      opt.MTU,
+		Table:    netcfg.TableWarp,
+		FWMark:   plan.FWMark,
+		Families: plan.Families,
+		Addrs:    plan.AddrStrings(),
+		Endpoint: endpoint,
+		UpSince:  time.Now().UTC(),
+	}
+	return cfg, plan, rtState, nil
+}
+
+// accountPrefixes 取出账户里的接口地址。
+func accountPrefixes(acct *cloudflare.Account) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, s := range []string{acct.AddrV4, acct.AddrV6} {
+		v := strings.TrimSpace(s)
+		if v == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(v)
+		if err != nil {
+			return nil, fmt.Errorf("账户里的地址 %q 无法解析: %w", v, err)
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("账户里没有任何接口地址")
+	}
+	return out, nil
+}
+
+// accountFamilies 返回账户里实际存在的地址族（用于体检时决定探哪几族）。
+func accountFamilies(acct *cloudflare.Account) []int {
+	var out []int
+	addrs, err := accountPrefixes(acct)
+	if err != nil {
+		return []int{health.FamilyV4, health.FamilyV6}
+	}
+	seen4, seen6 := false, false
+	for _, a := range addrs {
+		if a.Addr().Is4() {
+			if !seen4 {
+				seen4 = true
+				out = append(out, health.FamilyV4)
+			}
+			continue
+		}
+		if !seen6 {
+			seen6 = true
+			out = append(out, health.FamilyV6)
+		}
+	}
+	if len(out) == 0 {
+		return []int{health.FamilyV4, health.FamilyV6}
+	}
+	return out
+}
+
+// defaultAllowedIPs 让隧道接住所有目的地 —— 谁能用由策略路由决定，不是由这里决定。
+//
+// 只覆盖账户实际拥有的地址族：账户只有 IPv4 时若写上 ::/0，
+// 隧道会接住 v6 流量而接口上没有 v6 地址，结果是静默黑洞。
+func defaultAllowedIPs(addrs []netip.Prefix) []netip.Prefix {
+	var out []netip.Prefix
+	seenV4, seenV6 := false, false
+	for _, a := range addrs {
+		if a.Addr().Is4() {
+			if !seenV4 {
+				seenV4 = true
+				out = append(out, anyPrefix4)
+			}
+			continue
+		}
+		if !seenV6 {
+			seenV6 = true
+			out = append(out, anyPrefix6)
+		}
+	}
+	return out
+}
+
+// reportChange 说明这次 Ensure 到底动了什么 —— 幂等性因此变得可观测。
+func (a *app) reportChange(quiet bool, ch tunnel.Change, cfg tunnel.Config) {
+	if ch.LinkCreated {
+		a.say(quiet, i18n.KeyUpLinkCreated, cfg.IfName, cfg.MTU)
+	} else {
+		// 复用时明确说出来：用户最关心的恰恰是"这次有没有换 IP"。
+		a.say(quiet, i18n.KeyUpLinkReused, cfg.IfName)
+	}
+	switch {
+	case ch.Configured:
+		a.say(quiet, i18n.KeyUpConfigured)
+	case ch.ConfigMatched:
+		a.say(quiet, i18n.KeyUpCfgMatched)
+	}
+}
+
+// netlog 把 netcfg 的明细日志降到 debug 级别：默认输出只留汇总，
+// 需要排障时 `-v` 就能看到每一条规则/路由。
+func (a *app) netlog(format string, args ...any) {
+	a.log.Debugf(format, args...)
+}
+
+// finishGlobal 是全局模式的后置：自检通过才确认，否则立刻回滚。
+//
+// 为什么"自检失败要立刻回滚"而不是等保险丝超时：早点回滚能把断网窗口从
+// 45 秒缩到几秒。保险丝是给"连这段代码都没跑完"的极端情况兜底的。
+func (a *app) finishGlobal(ctx context.Context, snap *rollback.Snapshot, plan *netcfg.Plan, timeout time.Duration, noConfirm bool) int {
+	if noConfirm {
+		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyUpNoConfirm, timeout))
+		return exitOK
+	}
+
+	a.log.Infof("%s", a.bundle.T(i18n.KeyUpChecking))
+	// 自检有独立的预算，且必须明显小于保险丝超时（见 selfCheckBudget 的说明）。
+	checkCtx, cancel := context.WithTimeout(ctx, selfCheckBudget)
+	defer cancel()
+	detail, err := a.selfCheck(checkCtx, plan)
+	if err != nil {
+		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyUpCheckFail, err))
+		a.log.Warnf("%s", a.bundle.T(i18n.KeyUpRollingBack))
+		if rerr := rollback.Rollback(snap, a.guardLog); rerr != nil {
+			return a.fail(rerr)
+		}
+		// 回滚完了就要解除保险丝 —— 否则它超时后会再回滚一次，
+		// 把用户随后建立的隧道拆掉（见 rollback.Disarm 的说明）。
+		if derr := rollback.Disarm(); derr != nil {
+			a.log.Warnf("%v", derr)
+		}
+		_ = rollback.ClearSnapshot()
+		return exitUnhealthy
+	}
+	a.log.Infof("%s", a.bundle.Tf(i18n.KeyUpCheckOK, detail))
+	if err := rollback.Confirm(); err != nil {
+		return a.fail(err)
+	}
+	_ = rollback.ClearSnapshot()
+	a.log.Infof("%s", a.bundle.T(i18n.KeyUpGlobalDone))
+	return exitOK
+}
+
+// selfCheck 是放行全局模式前的最后一道检查，三条缺一不可。
+//
+// 全部只读：即使判定"不行"，我们也只是把自己加的东西撤掉，
+// 不会让"正在恢复"的状态变得更糟。
+func (a *app) selfCheck(ctx context.Context, plan *netcfg.Plan) (string, error) {
+	// ① 经隧道至少一族能拿到 warp=on —— 隧道真的通了。
+	viaTunnel, err := health.ProbeAny(ctx, plan.Families, health.Options{
+		Interface: plan.IfName,
+		Timeout:   8 * time.Second,
+	})
+	if err != nil {
+		return "", fmt.Errorf("经隧道没有拿到 warp=on: %w", err)
+	}
+
+	// ② 系统默认路径仍能出网。全局模式下这条本身也走 WARP，
+	//    但它走的是"策略规则"而不是"绑定接口"，正好验证规则配对没配错。
+	viaDefault, err := health.ProbeAny(ctx, plan.Families, health.Options{
+		Timeout: 6 * time.Second,
+	})
+	if err != nil {
+		return "", fmt.Errorf("系统默认路径已不可用（很可能整机断网）: %w", err)
+	}
+
+	// ③ 默认路由表项还在，且没有指向我们 —— 全局模式靠策略规则，
+	//    绝不该去改默认路由。这一条是在验证我们没做出格的事。
+	dev, err := netcfg.DefaultRouteDev(netcfg.FamilyV4)
+	if err != nil {
+		return "", fmt.Errorf("读取默认路由: %w", err)
+	}
+	if dev == "" {
+		return "", errors.New("找不到系统默认路由")
+	}
+	if dev == plan.IfName {
+		return "", fmt.Errorf("默认路由被指向了 %s（全局模式不该这么做）", plan.IfName)
+	}
+
+	return fmt.Sprintf("经隧道 %s；默认路径 %s；默认路由 dev=%s", viaTunnel, viaDefault, dev), nil
+}
+
+// newSnapshot 记录这次变更动了什么，供回滚使用。
+func newSnapshot(ifName string, plan *netcfg.Plan) (*rollback.Snapshot, error) {
+	if plan == nil {
+		return nil, errors.New("plan 为空，无法生成回滚快照")
+	}
+	seen := map[int]bool{}
+	var prefs []int
+	for _, r := range plan.Rules {
+		if !seen[r.Pref] {
+			seen[r.Pref] = true
+			prefs = append(prefs, r.Pref)
+		}
+	}
+	return &rollback.Snapshot{
+		CreatedAt:    time.Now().UTC(),
+		IfName:       ifName,
+		Table:        plan.Table,
+		Mode:         string(plan.Mode),
+		ManagedPrefs: prefs,
+		ResolvSHA256: rollback.ResolvFingerprint(),
+		PID:          os.Getpid(),
+		Reason:       "up --mode " + string(plan.Mode),
+	}, nil
+}
+
+// spawnGuard 派生保险丝进程。
+//
+// 三个要点：
+//   - setsid：让它脱离当前会话。发起变更的 SSH 会话一旦消失，
+//     同会话的进程会被一并带走，那样保险丝就形同虚设。
+//   - 不 Wait：它必须活得比我们久。
+//   - 日志进文件：那一刻已经没有任何终端可以给它了。
+func (a *app) spawnGuard(timeout time.Duration) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("定位自身可执行文件: %w", err)
+	}
+	if err := os.MkdirAll(rollback.RunDir(), 0o700); err != nil {
+		return fmt.Errorf("创建 %s: %w", rollback.RunDir(), err)
+	}
+	logFile, err := os.OpenFile(rollback.GuardLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("打开保险丝日志: %w", err)
+	}
+	defer logFile.Close()
+
+	cmd := exec.Command(exe,
+		"--lang", string(a.bundle.Lang()),
+		"rollback-guard",
+		"--timeout", timeout.String(),
+		"--snapshot", rollback.SnapshotPath())
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("派生保险丝进程: %w", err)
+	}
+	_ = cmd.Process.Release()
+	return nil
+}
+
+// acquireLock 拿单实例锁。拿不到时明确报错（退出码 4），绝不静默继续。
+func (a *app) acquireLock() (*state.Lock, int) {
+	// 锁文件在 /run/warpgo/ 下，父目录可能还不存在。
+	if err := os.MkdirAll(filepath.Dir(state.DefaultLockPath), 0o700); err != nil {
+		a.log.Errorf("%v", err)
+		return nil, exitError
+	}
+	lock, st, err := state.Acquire(state.DefaultLockPath, state.DefaultStaleAfter)
+	if err != nil {
+		a.log.Errorf("%v", err)
+		return nil, exitError
+	}
+	if st == state.StatusBusy {
+		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyLockBusy, holderPID(state.DefaultLockPath)))
+		return nil, exitLockBusy
+	}
+	a.reportTakeover(lock)
+	return lock, exitOK
+}
+
+// tryLock 尝试取锁；被占时返回 ok=false（不报错）。
+//
+// 巡检专用的语义：锁被别人占着是**正常情形**（用户可能正在手工 up），
+// 本轮跳过就好，不该让保活在 journal 里刷错误。
+func (a *app) tryLock() (release func(), ok bool) {
+	if err := os.MkdirAll(filepath.Dir(state.DefaultLockPath), 0o700); err != nil {
+		a.log.Warnf("准备锁目录: %v", err)
+		return nil, false
+	}
+	lock, st, err := state.Acquire(state.DefaultLockPath, state.DefaultStaleAfter)
+	if err != nil {
+		a.log.Warnf("获取单实例锁: %v", err)
+		return nil, false
+	}
+	if st == state.StatusBusy {
+		a.log.Infof("%s", a.bundle.Tf(i18n.KeyLockBusy, holderPID(state.DefaultLockPath)))
+		return nil, false
+	}
+	a.reportTakeover(lock)
+	return func() { a.releaseLock(lock) }, true
+}
+
+func (a *app) releaseLock(lock *state.Lock) {
+	if lock == nil {
+		return
+	}
+	if err := lock.Release(); err != nil {
+		a.log.Warnf("release lock: %v", err)
+	}
+}
+
+// tearDown 清规则/路由 + 删接口，返回是否真的删掉了接口。
+func (a *app) tearDown(ctx context.Context, ifName string) error {
+	if _, err := netcfg.Cleanup(a.netlog); err != nil {
+		return err
+	}
+	if ifName == "" {
+		ifName = netcfg.DefaultIfName
+	}
+	tun, err := tunnel.NewKernel(ifName)
+	if err != nil {
+		return err
+	}
+	defer tun.Close()
+	_, err = tun.TearDown(ctx)
+	return err
+}

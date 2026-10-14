@@ -34,12 +34,12 @@
 |---|---|---|---|---|
 | `4` `6` `d` 装接口/切栈 | `install()` + `stack_switch()` | `netcfg` + `tunnel` | **M2** | 已装则变为"切栈"（改 AllowedIPs 注释） |
 | `o` 临时开关 | `onoff()` | `cli` + `netcfg` | M2 | 关 = 拆接口但保留配置；开 = `up --force` |
-| `n` 获取 IP / 重连 | `net()`（199 行） | `health` + `keepalive` | M2/M4 | **新语义**：默认先体检，健康不动；`--force` 才重建 |
+| `n` 获取 IP / 重连 | `net()`（199 行） | `health` + `keepalive` | ✅ M2/M4 | **新语义**：默认先体检，健康不动；`--force` 才重建。保活即 `watch`（M4） |
 | `i` 换 IP（Netflix） | `change_ip()`（214 行） | `cloudflare` + `netcfg` | M5 | 重新注册 + 切 reserved |
 | `g` 全局/非全局切换 | `working_mode_switch()` | `netcfg.route` | M3 | 要连路由一起换，不是只改注释 |
 | `k` 内核↔用户态 | `kernel_reserved_switch()` | `tunnel` + `userspace` | M5 | 同一套实现对两种后端 |
 | `s 4/6/d` 栈优先级 | `stack_priority()` + `result_priority()` | `netcfg.priority` | M6 | Debian 上用 `gai.conf` + `ip rule` 优先级 |
-| `u` 卸载 | `uninstall()`（93 行） | `state.uninstall` | **M4** | 见 §8.13 的"必须还原清单" |
+| `u` 卸载 | `uninstall()`（93 行） | `cmd/uninstall.go` | ✅ **M4**（DNS 还原已实测） | 见 §8.13 的"必须还原清单" |
 | `v` 版本/同步 | `ver()` + `check_cdn()` | `cli.version` | M9 | Go 版无"同步脚本"，改为查新版本 + 可选自更新 |
 | `b` 升级内核 + BBR | `bbrInstall()` | `system.bbr` | M9 | 只做 BBR；内核升级只做"检查 + 提示" |
 | ~~`b` 里的 DD 重装系统~~ | `bbrInstall()` 内 | — | — | **已确认不编入**（§14.1） |
@@ -114,29 +114,56 @@ cmd/warpgo             CLI / 菜单 / i18n
 
 ## 6. 目录结构
 
+`✅` 表示已落地（M0–M4），其余为规划中的位置。
+
 ```
 warpgo/
-├── cmd/warpgo/main.go
+├── cmd/warpgo/
+│   ├── main.go         ✅ CLI 分派、全局选项、dev 子命令
+│   ├── opts.go         ✅ 极简选项解析（--name value / --name=value）
+│   ├── register.go     ✅ 注册
+│   ├── account.go      ✅ 账户查看
+│   ├── profile.go      ✅ wg-quick 配置输出
+│   ├── ensure.go       ✅ 建隧道的共用流程（up 与 watch 走同一份代码）
+│   ├── up.go           ✅ 建立隧道
+│   ├── down.go         ✅ 先停保活，再拆隧道，最后还原 DNS
+│   ├── status.go       ✅ 状态
+│   ├── watch.go        ✅ 巡检命令
+│   ├── install.go      ✅ 装成 systemd 服务
+│   ├── uninstall.go    ✅ 撤干净（含 DNS 还原）
+│   ├── guard.go        ✅ confirm / rollback-guard
+│   └── dns.go          ✅ resolv.conf 的备份与还原
 ├── internal/
-│   ├── cloudflare/  api.go types.go reserved.go account.go   # 不做 teams.go
-│   ├── health/      probe.go                                 # 只读探测（M3 自检 / M4 保活共用）
-│   ├── rollback/    rollback.go                              # 快照 / 保险丝 / 回滚
-│   ├── wgconf/      keys.go profile.go                       # X25519 密钥、wg-quick 配置
-│   ├── tunnel/      tunnel.go kernel.go        # userspace.go / uapi.go 属 M5
-│   ├── netcfg/      netcfg.go link.go route.go rule.go(rulenl) plan.go apply.go
-│   ├── split/       iptables.go dnsmasq.go ipset.go
-│   ├── proxy/       wireproxy.go
-│   ├── cfclient/    install.go mode.go hooks.go
-│   ├── system/      bbr.go kernel.go dd.go
-│   ├── health/      probe.go
-│   ├── keepalive/   loop.go
-│   ├── state/       state.go lock.go uninstall.go
-│   └── i18n/        en.go zh.go
-├── third_party/wireguard-go/   # vendored，唯一补丁：reserved
-├── systemd/         warpgo-watch.service
-├── tests/           unit/ fake/ e2e/
-└── packaging/       build.sh  (可选 .deb)
+│   ├── cloudflare/  ✅ api.go types.go reserved.go account.go   # 不做 teams.go
+│   ├── wgconf/      ✅ keys.go profile.go        # X25519 密钥、wg-quick 配置
+│   ├── tunnel/      ✅ tunnel.go kernel.go       # userspace.go / uapi.go 属 M5
+│   ├── netcfg/      ✅ netcfg.go link.go route.go rulenl.go plan.go apply.go
+│   ├── health/      ✅ probe.go                  # 只读探测（M3 自检 / M4 保活共用）
+│   ├── keepalive/   ✅ keepalive.go              # 巡检策略与循环（依赖全部可注入）
+│   ├── rollback/    ✅ rollback.go               # 快照 / 保险丝 / 回滚
+│   ├── systemd/     ✅ systemd.go                # 单元渲染 + systemctl
+│   ├── dns/         ✅ dns.go                    # resolv.conf 备份/改写/还原
+│   ├── state/       ✅ fs.go lock.go proc*.go runtime.go
+│   ├── system/      ✅ platform.go               # bbr.go / kernel.go / dd.go 属 M9
+│   ├── logx/        ✅ logx.go
+│   ├── version/     ✅ version.go
+│   ├── i18n/        ✅ keys.go en.go zh.go
+│   ├── split/       iptables.go dnsmasq.go ipset.go                          # M6
+│   ├── proxy/       wireproxy.go                                             # M7
+│   └── cfclient/    install.go mode.go hooks.go                              # M8
+├── docs/DESIGN.md                                # 本文件（唯一正式版）
+├── tests/e2e/       ✅ m0-lock.sh m1-register.sh m2-updown.sh m3-global.sh m4-watch.sh
+├── build.sh         ✅ 产出 dist/warpgo
+└── third_party/wireguard-go/                     # vendored，唯一补丁：reserved（M5）
 ```
+
+与规划的两处偏差（都已落地，在此说明而不是留成「文档与现实不符」）：
+
+- 单实例锁没有单独的 `state.go` / `uninstall.go` —— 锁在 `lock.go` + `proc*.go`，
+  卸载逻辑在 `cmd/warpgo/uninstall.go`：它要用到 i18n 与 systemd，
+  放进 `internal/state` 会把依赖方向搞反（底层包不该依赖业务包）。
+- 单元文件不随仓库分发，而是由 `install` 现场渲染 —— `ExecStart` 里要写安装时的
+  `--lang` 与路径参数，预置一份静态文件反而会与实际不符。
 
 ---
 
@@ -306,6 +333,20 @@ pref 9020: not fwmark 0xca6c lookup 51820          # 两族：其余流量交给
   每 5 分钟被重建、IP 一直变。
 - **巡检语义：健康就不动，断链才重建**。强制重建用 `--force`；只换 IP 用 `rotate`。
 
+**M4 的落地形态**（§8.6 那三条做成这样）：
+
+1. **体检是只读的**，而且只打 IP 字面量：`netcfg.LinkExists` 先确认接口在，
+   再用 `health.ProbeAny` 绑接口探测 —— 零 DNS、秒级返回。
+2. **巡检进程永不因链路问题退出**。重建失败只上报事件，下一轮继续试。
+   这条是刻意的：如果失败就退出，systemd 会每 30 秒重启一次，日志里堆满
+   没有信息量的重启记录，而"端点不可达"并不会因为重启而自愈。
+3. **单实例锁被占是正常情形**，不是错误。用户可能正在手工 `up`，本轮跳过就好；
+   但汇总里必须记一笔（`skipped 1`），否则用户会以为"巡检定过了一切正常"。
+4. **"重建"包含硬复位**。现实中最常见的故障不是"接口被删了"，而是
+   **接口在、配置对、就是不通**。这时单纯的 `Ensure` 会认为"什么都不用改"，
+   于是永远修不好 —— 所以要显式做一次硬复位强制重新握手。
+   注意出口 IP **不会**因此改变：它是账户里分配的固定地址，变的只是这一次握手。
+
 ### 8.7 单实例锁
 
 `/run/warpgo/net.lock`，内容 `PID 心跳时间戳`：
@@ -362,11 +403,17 @@ systemd 中止 `restart`。新实现里所有规则必须**成对生成、由同
 | systemd 单元 | 已删 | 同 |
 | `/usr/bin/warp` | 已删 | `/usr/bin/warpgo` |
 | ipset / dnsmasq 配置 | 已清 | 同 |
-| **`/etc/resolv.conf`** | ⚠️ **仍是 `nameserver 1.1.1.1`，且 `resolv.conf.origin` 备份已被删** | **必须还原**；且原文件备份保留到用户显式确认后才删 |
+| **`/etc/resolv.conf`** | ⚠️ **仍是 `nameserver 1.1.1.1`，且 `resolv.conf.origin` 备份已被删** | ✅ **M4 已实现**：`up --dns` 才改它（默认不碰）；改前备份到 `/etc/warpgo/resolv.conf.origin`，**第一次写入后不再被覆盖**；`down` / `uninstall` 还原并只在还原成功后删备份；`/etc/resolv.conf` 若是符号链接则拒绝改写（systemd-resolved 机器） |
 | BBR sysctl | 保留（合理，无害） | 保留但提示 |
 | 调试备份文件（`*.bak-*`） | 留在 `/etc/wireguard/`（14 个） | 测试残留由 M0 统一移到 `/root/warp-old-backup/` |
 
-幂等要求：`up` 连跑 3 次规则数不变；`down` 后零残留；`install` 可重复执行。
+幂等要求：`up` 连跑 3 次规则数不变；`down` 后零残留；`install` 可重复执行；
+`uninstall` 可以连跑两次。
+
+**`--purge` 只删自己认识的文件**：状态目录里一旦出现陌生文件，就整个目录跳过、
+一个都不删，并把清单打出来。理由是 `/etc/warpgo` 的位置可以被环境变量指向任何地方
+（验收脚本就是这么做的），无脑 `RemoveAll` 有可能把用户的目录清空 —— 那是不可逆的。
+默认**不删账户**：它是一个身份，删掉就意味着下次注册会拿到新的 WARP 出口地址。
 
 ### 8.14 版本与遥测
 
@@ -389,7 +436,10 @@ systemd 中止 `restart`。新实现里所有规则必须**成对生成、由同
 warpgo menu                                   # 交互菜单（等价旧的裸 warp）
 warpgo register | rotate | account ...
 warpgo up [--mode non-global|global] [--family 4|6|d] [--backend kernel|userspace] [--force]
-warpgo down | status [--json] | watch [--once]
+warpgo down [--keep-watch] | status [--json]
+warpgo watch [--once] [--max-rounds N] [--interval 5m] [--mode ...]
+warpgo install [--interval 5m] [--mode ...] [--no-start]
+warpgo confirm
 warpgo switch --mode global        # g
 warpgo switch --backend reserved   # k
 warpgo priority 4|6|d              # s
@@ -409,18 +459,41 @@ warpgo version [--check] [--self-update]
 
 ## 10. systemd
 
+由 `warpgo install` 生成，实际内容如下（省略了注释行）：
+
 ```ini
-# warpgo-watch.service —— 保活常驻
+[Unit]
+Description=warpgo WARP keepalive
+Documentation=https://github.com/misakacoo/warpgo
+After=network-online.target
+Wants=network-online.target
+
 [Service]
 Type=simple
-ExecStart=/usr/bin/warpgo watch
+ExecStart=/usr/bin/warpgo --lang zh watch --interval 5m0s --ifname warp --mode non-global
 Restart=always
 RestartSec=30s
+TimeoutStopSec=60s
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-`watch` 自身幂等（健康时什么都不做），所以 restart 不会造成 IP 抖动。
-`down` 时执行 `systemctl reset-failed warpgo-watch.service`
-（照搬"ExecStop 失败会中止 restart"那轮的教训）。
+五个刻意的选择：
+
+1. **路径一律写绝对路径**（`/usr/bin/warpgo`）。单元里的相对路径会随 systemd 的
+   工作目录变化，而那个目录不是我们能控制的。
+2. **`--lang` 在安装时被钉住**。systemd 启动的进程没有登录会话，`LANG` 通常是空的
+   —— 那样 journal 里全是英文。而看 journal 的正是当初执行 `install` 的那个人，
+   所以按他的语言固定下来最合理。想改就重跑一次 `install`。
+3. **刻意不写 `ExecStop`**。ExecStop 非零退出会让 systemd 把整个单元标成 failed，
+   而且会让 restart 的语义变得难以推理 —— 上游正是在这里翻过车。
+   "清理现场"是 `warpgo down` / `warpgo uninstall` 的职责，不是停止服务的职责。
+4. **`watch` 自身幂等**（健康时什么都不做），所以 restart 不会造成出口 IP 抖动。
+   这一点是 `Restart=always` 敢用的前提。
+5. **`down` 会先停这个服务**，然后 `reset-failed`。前者是因为不停它就会在下一轮
+   把隧道建回来（用户会以为 `down` 没生效）；后者是因为单元一旦被标成 failed，
+   `restart` 会退化成"只重启不重载"，后续行为难以推理。
 
 ---
 
@@ -431,13 +504,31 @@ RestartSec=30s
 | **M0** | 骨架 + 状态/锁/i18n/日志 + 把调试残留移走 | `warpgo version` 能跑；`--lang` 生效；单实例锁三种行为（占用提示 / 心跳 / 接管）单测过 |
 | **M1** | `cloudflare` + `wgconf`：注册、reserved、profile | ✅ **完成**（2026-10-14）：真机验收 **39/39**，见下方 |
 | **M2** | `tunnel`(内核) + `netcfg` 非全局 + `up/down/status` | ✅ **完成**（2026-10-14）：真机 **38/38** —— 见下方（菜单骨架未做，挪到功能齐了之后单独做） |
-| **M3** | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ **完成**（2026-10-14）：真机 **31/31** —— 见下方 |
-| **M4** | `health` + `keepalive` + systemd + **卸载** | ① 健康时连跑 5 次**接口创建时间不变**；② `ip link del warp` 后一轮内自愈；③ 伪造旧格式锁能接管；④ `uninstall` 后系统回到 M0 前的干净状态（含 DNS 还原） |
+| **M3** | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ **完成**（2026-10-14）：真机 **32/32** —— 见下方 |
+| **M4** | `health` + `keepalive` + systemd + **卸载** | ✅ **完成**（2026-10-14）：真机 **70/70** —— 见下方 |
 | **M5** | 用户态后端 + reserved + `rotate` + 账户/license | 需要 reserved 的区域握手成功；`rotate` 换 IP 后仍 `warp=on`；账户类型显示正确 |
 | **M6** | `s` 栈优先级 + `e` 分流 | 优先级切换后 `curl -4/-6` 出口符合预期；分流开启后命中走 warp、未命中走原生；关闭后 iptables/ipset/dnsmasq 零残留 |
 | **M7** | `w` / `y` WireProxy | socks5 可用；开关后进程 / 单元 / 配置干净 |
 | **M8** | `c` / `l` / `r` 官方 Client + `z` / `x` 钩子 | 三种模式切换正确；`z`/`x` 的 ip rule 加减成对；`r` 开关后 `warp-cli status` 符合预期 |
 | **M9** | `b` BBR + 版本/自更新 + 打包 | BBR 开关与还原正确；静态二进制 + `.deb` 可装可卸；`--check` 能查到新版本 |
+
+**M4 交付**（2026-10-14，真机 Debian 12）：
+
+- `internal/keepalive`：把"健康就不动、断了才重建"做成**依赖全部可注入**的循环
+  （体检 / 重建 / 加锁 / 休眠都是回调），于是四条分支（健康、断链、被锁挡住、
+  重建失败）都能在不碰真实网络的前提下单测。库层只发事件、不拼文案。
+- `internal/systemd`：单元渲染是纯函数；`Manager` 的 `systemctl` 执行器与安装路径
+  都可注入，因此"装/卸"流程能在单测里完整跑一遍。
+- `internal/dns`：`/etc/resolv.conf` 的**改前备份、用后还原**。备份写在状态目录里，
+  第一次写入后不再被覆盖（先到的那个才是原始文件）。
+- `cmd/warpgo`：`watch`（含 `--once` / `--max-rounds`）、`install`、`uninstall`；
+  `up` 新增 `--dns`，`down` 会**先停保活**再拆隧道。
+- 在 `up` 与 `watch` 之间抽出共用的 `ensureTunnel` —— 两条路径必须走**完全一样**的代码，
+  否则"手工执行能修好、保活却修不好"这类偏差迟早会出现。
+- 真机 70/70 通过（详见 §12）：健康时连跑 5 次接口创建时间不变、删掉接口一轮内自愈、
+  坏端点触发硬复位、被锁挡住如实报告、旧格式锁接管且不误杀、install/uninstall 全链路、
+  DNS 还原（sha256 一致）、`--purge` 拒绝删除陌生文件。
+- 单测累计 **116 条**全通过；`gofmt` / `go vet` 干净；M0–M3 全部回归通过。
 
 **M3 交付**（2026-10-14，真机 Debian 12）：
 
@@ -449,7 +540,7 @@ RestartSec=30s
   超时无条件回滚。库层只发事件、不拼文案（文案属 CLI 层）。
 - `up --mode global`：快照 → 派生保险丝 → 应用 → 自检 → 确认；
   自检失败**立即回滚**，另加 `--no-confirm` / `--guard-timeout`。
-- 真机 31/31 通过（详见 §12）：全局生效（不绑接口也 `warp=on`）、SSH 不断、
+- 真机 32/32 通过（详见 §12）：全局生效（不绑接口也 `warp=on`）、SSH 不断、
   坏端点 16 秒内主动回滚、`--no-confirm` 下保险丝 25 秒超时自动回滚并恢复网络。
 - 单测累计 **90 条**全通过；`gofmt` / `go vet` 干净；M0/M1/M2 全部回归通过。
 
@@ -496,9 +587,40 @@ profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则�
   ③ 模拟"接口已删 + `[detached]` 显示形态"时仍按句柄清干净。
 - **假 UAPI socket**：断言握手序列、`reserved` 确实下发到用户态后端。
 
+### M4 真机实测（2026-10-14）
+
+真机 **70/70** 通过。这个脚本会**真的装一个 systemd 服务**、**真的改写
+`/etc/resolv.conf`** —— 那正是它要验证的东西，所以它靠三重兜底保证收尾干净
+（脚本自己的 trap、每一步记录"改之前是什么"、调用方挂的死人开关）。
+
+- **健康时连跑 5 次，接口创建时间与规则数完全不变**；再走一遍真实的循环
+  （`--max-rounds 2 --interval 10s`）也一样。判据仍然是 `/sys/class/net/warp` 的 mtime。
+- **`ip link del warp` 之后一轮内自愈**：日志依次是"接口 warp 不存在 → 正在重建 →
+  已重建"，接口创建时间变化、规则数回到 5（没有累积）。
+- **坏端点（TEST-NET-1）触发硬复位**：`up --endpoint 192.0.2.1:2408` 让接口在、
+  配置一致、链路不通，`watch --once` 识别出这一点并重建接口。
+  两个地址族各超时 8 秒，所以这一轮约 16 秒 —— 日志里能清楚看到是哪两族失败。
+- **被锁挡住时如实报告**：退出码 2、汇总里记 `skipped 1`、接口一动不动。
+  （最初这条断言写的是"日志里要出现『锁』这个字"，而英文输出用的是
+  "another warpgo instance…" —— 又一次栽在断言依赖措辞上。现在脚本把 `LANG`
+  钉死，并且断言改成结构性事实。）
+- **旧格式遗留锁被接管，无辜进程未被误杀**：假锁里放的是 `sleep 300` 的 PID，
+  日志显示"无法确认身份，只接管不杀"。
+- **install / uninstall 全链路**：单元写入 `/etc/systemd/system/warpgo-watch.service`
+  （0644、`Restart=always`、**刻意没有 `ExecStop`**）、二进制装到 `/usr/bin/warpgo`、
+  开机自启生效、服务真的在跑（journal 里有巡检记录）。
+- **`down` 会先停保活**：不然它下一轮会把隧道建回来，用户看到的是"拆了又自己回来"，
+  而且会怀疑 `down` 根本没生效。停完之后**开机自启仍然保留**（停 ≠ 禁用）。
+- **DNS 全流程**：改之前没有备份；`up --dns 1.1.1.1,1.0.0.1` 之后原文被存到
+  `/etc/warpgo/resolv.conf.origin`、`/etc/resolv.conf` 被改写、接口没有被重建；
+  `uninstall` 之后 resolv.conf 的 **sha256 与最初完全一致**、备份被清掉。
+  这正是旧版丢掉的那一环 —— 它卸载后留下了 `nameserver 1.1.1.1` 而备份已删。
+- **`--purge` 的安全性**：目录里只有自己的文件时清空；一旦出现陌生文件就**整目录跳过**，
+  一个都不删，并把清单打出来。
+
 ### M3 真机实测（2026-10-14）
 
-真机 **31/31** 通过。这个脚本会**故意让机器失去网络若干秒** —— 那正是它要验证的场景。
+真机 **32/32** 通过。这个脚本会**故意让机器失去网络若干秒** —— 那正是它要验证的场景。
 
 - 全局模式生效的判据是「**不绑定接口**也拿到 `warp=on`」：这与 M2 的非全局正好反向
   （那边不绑接口必须 `warp=off`）。两条合起来才说明模式真的切换了。

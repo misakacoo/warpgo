@@ -8,11 +8,24 @@ var en = map[string]string{
 Usage:
   warpgo <command> [options]
 
-Commands:
+Account:
   register             register a new WARP device and store the account
   account              show the stored account (--refresh pulls it from the API)
-  profile              print a wg-quick config for the stored account
-  version              print version information
+  profile              print a wg-quick config for the account (escape hatch)
+
+Tunnel:
+  up                   bring the tunnel up (idempotent; --mode global to take over everything)
+  down                 tear the tunnel down and remove every leftover
+  status               show the current state (--json for scripts)
+
+Keepalive:
+  watch                health-check loop: a healthy link is left alone, a broken one is rebuilt
+  install              install the keepalive as a systemd service (enable + start)
+  uninstall            remove everything: unit, tunnel, binary, DNS changes
+  confirm              keep the current change and disarm the rollback fuse
+
+Other:
+  version              print version information (--check asks GitHub for updates)
   help                 print this help
   dev lock             exercise the single-instance lock (development helper)
   dev platform         check that this is a Debian system
@@ -21,10 +34,6 @@ Global options:
   --lang en|zh         force output language (default: inferred from LANG)
   -v, --verbose        debug logging
   -q, --quiet          warnings and errors only
-
-Planned commands (implemented milestone by milestone):
-  up  down  status  watch  rotate  switch  priority
-  split  proxy  client  bbr  uninstall  version --check
 
 Exit codes:
   0 ok   1 general error   2 unhealthy   3 reserved unsupported
@@ -77,17 +86,17 @@ Kernel WireGuard ignores the "# Reserved" line; see docs/DESIGN.md §8.2.`,
 	KeyProfTableOffHint: "Table = off: this config takes over no routes. IPv4 still works because the interface owns an address " +
 		"and the kernel honours the outgoing interface; IPv6 needs explicit routes (M2's non-global mode will handle that).",
 
-	KeyUpStart:        "bringing up the WARP tunnel (mode %s, interface %s)",
-	KeyUpLinkCreated:  "created interface %s (MTU %d)",
-	KeyUpLinkReused:   "interface %s already exists -- reusing it (no rebuild, no new IP)",
-	KeyUpAddrs:        "interface addresses: %s",
-	KeyUpConfigured:   "pushed WireGuard configuration",
-	KeyUpCfgMatched:   "WireGuard configuration already matches -- left untouched (avoids a needless re-handshake)",
-	KeyUpNetcfg:       "applied network config: %d route(s), %d rule(s)",
-	KeyUpCleaned:      "cleaned up %d stale rule(s) first",
-	KeyUpForce:        "--force: the existing tunnel will be torn down first",
-	KeyUpDone:         "WARP tunnel is up (%s mode)",
-	KeyUpNotDebian:    "bringing up a tunnel changes system networking, so this refuses to run on %s",
+	KeyUpStart:       "bringing up the WARP tunnel (mode %s, interface %s)",
+	KeyUpLinkCreated: "created interface %s (MTU %d)",
+	KeyUpLinkReused:  "interface %s already exists -- reusing it (no rebuild, no new IP)",
+	KeyUpAddrs:       "interface addresses: %s",
+	KeyUpConfigured:  "pushed WireGuard configuration",
+	KeyUpCfgMatched:  "WireGuard configuration already matches -- left untouched (avoids a needless re-handshake)",
+	KeyUpNetcfg:      "applied network config: %d route(s), %d rule(s)",
+	KeyUpCleaned:     "cleaned up %d stale rule(s) first",
+	KeyUpForce:       "--force: the existing tunnel will be torn down first",
+	KeyUpDone:        "WARP tunnel is up (%s mode)",
+	KeyUpNotDebian:   "bringing up a tunnel changes system networking, so this refuses to run on %s",
 
 	KeyDownStart:   "tearing down the WARP tunnel",
 	KeyDownNothing: "nothing to tear down (no interface, no leftover rules or routes)",
@@ -118,7 +127,7 @@ Kernel WireGuard ignores the "# Reserved" line; see docs/DESIGN.md §8.2.`,
 	KeyGuardRBDone:    "rollback complete: the network is back to the pre-WARP state",
 	KeyGuardNote:      "(detail) %s",
 
-	KeyConfirmOK: "confirmed: the new configuration is kept and the fuse is disarmed",
+	KeyConfirmOK:   "confirmed: the new configuration is kept and the fuse is disarmed",
 	KeyConfirmNone: "there is no pending change to confirm (nothing was left unconfirmed)",
 
 	KeyUpGlobalStart:  "enabling global mode (ALL traffic will go through WARP)",
@@ -129,6 +138,50 @@ Kernel WireGuard ignores the "# Reserved" line; see docs/DESIGN.md §8.2.`,
 	KeyUpRollingBack:  "rolling back to the pre-change state",
 	KeyUpNoConfirm:    "--no-confirm: config applied but NOT confirmed; run `warpgo confirm` within %s or it rolls back automatically",
 	KeyUpGlobalDone:   "global mode is active (all traffic goes through WARP)",
+
+	KeyWatchStart:      "keepalive started: every %s (interface %s, mode %s)",
+	KeyWatchRound:      "round %d",
+	KeyWatchHealthy:    "link is healthy (%s) -- left untouched",
+	KeyWatchUnhealthy:  "link is broken: %v -- rebuilding",
+	KeyWatchRebuilding: "rebuilding the tunnel",
+	KeyWatchRebuilt:    "rebuilt: %s",
+	KeyWatchFailed:     "rebuild failed: %v (will retry next round -- the process stays alive on purpose)",
+	KeyWatchLocked:     "round %d skipped: the single-instance lock is held by someone else",
+	KeyWatchStopped:    "keepalive stopped: %d round(s) -- healthy %d, rebuilt %d, failed %d, skipped %d",
+	KeyWatchNotDebian:  "the keepalive creates tunnels and changes system networking, so it refuses to run on %s",
+
+	KeyUpHardReset: "interface and config both look right but the link is down -- hard-resetting to force a new handshake (the WARP IP does not change; only the handshake does)",
+
+	KeyDNSSet:      "nameserver set to %s",
+	KeyDNSBackup:   "original resolv.conf saved to %s",
+	KeyDNSRestored: "restored %s from the backup",
+	KeyDNSSymlink:  "%s is a symlink (likely managed by systemd-resolved); refusing to overwrite it",
+
+	KeyInstallNotDebian:  "the installed service would change system networking automatically, so this refuses to run on %s",
+	KeyInstallBinary:     "installed %s -> %s",
+	KeyInstallBinarySame: "%s is already the running binary -- left as is",
+	KeyInstallUnit:       "wrote unit %s",
+	KeyInstallEnabled:    "enabled %s (starts on boot)",
+	KeyInstallNoStart:    "--no-start: %s was not started",
+	KeyInstallStarted:    "started %s",
+	KeyInstallDone:       "install complete: %s will health-check the link every %s",
+	KeyPurgeRefused:      "refusing to clean %s: it contains files warpgo does not recognise (%s) -- remove them yourself first if you really want it gone",
+
+	KeyUninstallStopped:       "stopped %s",
+	KeyUninstallDisabled:      "disabled %s",
+	KeyUninstallUnitRemoved:   "removed unit %s",
+	KeyUninstallNoUnit:        "no systemd unit at %s -- nothing to stop",
+	KeyUninstallLockBusy:      "another instance holds the lock (a manual up/down may be in progress); continuing the uninstall anyway",
+	KeyUninstallTornDown:      "tunnel torn down; rules, routes and runtime state cleaned",
+	KeyUninstallNoDNS:         "no resolv.conf backup -- warpgo never changed DNS",
+	KeyUninstallBinaryRemoved: "removed %s",
+	KeyUninstallNoBinary:      "%s was not there",
+	KeyUninstallKeptBinary:    "--keep-binary: left %s in place",
+	KeyUninstallStateKept:     "kept %s (it holds your WARP account -- pass --purge to delete it too)",
+	KeyUninstallStatePurged:   "removed %s (%d file(s))",
+	KeyUninstallDone:          "uninstall complete",
+
+	KeyDownWatchStopped: "stopped the keepalive service %s (otherwise it would bring the tunnel back next round)",
 
 	KeyPlatformDebian:   "system check: Debian %s",
 	KeyPlatformNotDebia: "this command only supports Debian (detected: %s)",
