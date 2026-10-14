@@ -8,7 +8,6 @@ import (
 	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/systemd"
-	"github.com/misakacoo/warpgo/internal/tunnel"
 )
 
 func (a *app) cmdDown(args []string) int {
@@ -53,23 +52,15 @@ func (a *app) cmdDown(args []string) int {
 
 	a.log.Infof("%s", msg.T(msg.KeyDownStart))
 
-	// 顺序很重要：**先清规则与路由，再删接口**。
+	// tearDown 的顺序很重要：**先清规则与路由，再删接口**。
 	//
 	// 反过来做的话，规则会短暂处于"引用了已不存在的接口"的状态；
 	// 上游正是在这里翻过车 —— 接口删掉后 `ip rule show` 把它渲染成
 	// `oif warp [detached]`，按字符串匹配就再也删不掉了。
-	res, err := netcfg.Cleanup(a.netlog)
-	if err != nil {
-		return a.fail(err)
-	}
-
-	tun, err := tunnel.NewKernel(name)
-	if err != nil {
-		return a.fail(err)
-	}
-	defer tun.Close()
-
-	deleted, err := tun.TearDown(ctx)
+	//
+	// 它对两种后端都适用：删接口是同一个动作，而"停用户态守护进程"
+	// 在没有守护进程时是空操作。所以 down 不必先判断当前用的是哪种后端。
+	res, deleted, err := a.tearDown(name)
 	if err != nil {
 		return a.fail(err)
 	}

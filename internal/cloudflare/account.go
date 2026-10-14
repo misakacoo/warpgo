@@ -142,55 +142,6 @@ func (a *Account) Addresses() []string {
 func (a *Account) HasV4() bool { return a.AddrV4 != "" }
 func (a *Account) HasV6() bool { return a.AddrV6 != "" }
 
-// ApplyDevice 用服务端返回的设备信息更新账户里「服务端说了算」的字段。
-//
-// 刻意只更新这些字段，不碰本地密钥：私钥是本机生成的，任何来自网络的数据都不该
-// 覆盖它。这样即使响应被篡改，最坏也只是拿到错误的地址/端点（连不上），
-// 而不会把本地私钥换掉。
-func (a *Account) ApplyDevice(dev *Device) {
-	if dev == nil {
-		return
-	}
-	if dev.Account.ID != "" {
-		a.AccountID = dev.Account.ID
-	}
-	if dev.Account.AccountType != "" {
-		a.AccountType = dev.Account.AccountType
-	}
-	if dev.Account.License != "" {
-		a.License = dev.Account.License
-	}
-	if dev.Token != "" {
-		a.Token = dev.Token
-	}
-
-	if v4 := AddressV4Prefix(dev.Config.Interface.Addresses.V4); v4 != "" {
-		a.AddrV4 = v4
-	}
-	if v6 := AddressV6Prefix(dev.Config.Interface.Addresses.V6); v6 != "" {
-		a.AddrV6 = v6
-	}
-	if dev.Config.ClientID != "" {
-		a.ClientID = dev.Config.ClientID
-		a.Reserved = MustReservedFromClientID(dev.Config.ClientID)
-	}
-	if len(dev.Config.Peers) > 0 {
-		peer := dev.Config.Peers[0]
-		if peer.PublicKey != "" {
-			a.PeerPublicKey = peer.PublicKey
-		}
-		if ep := peer.Endpoint.HostPort(); ep != "" {
-			a.Endpoint = ep
-		}
-		if ep := peer.Endpoint.HostPortV4(); ep != "" {
-			a.EndpointV4 = ep
-		}
-		if ep := peer.Endpoint.HostPortV6(); ep != "" {
-			a.EndpointV6 = ep
-		}
-	}
-}
-
 // Save 把账户写进 path（0600、原子写）。
 func (a *Account) Save(path string) error {
 	data, err := json.MarshalIndent(a, "", "  ")

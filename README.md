@@ -10,7 +10,7 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 
 ## 状态
 
-按里程碑推进。当前：**M4 完成（保活巡检 + systemd 服务 + 卸载）**
+按里程碑推进。当前：**M5 完成（用户态后端 + reserved + 换 IP + 在线互换）**
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
@@ -19,19 +19,20 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 | M2 | 内核后端 + 非全局出口 + up/down/status | ✅ 完成（真机 38/38） |
 | M3 | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ 完成（真机 32/32） |
 | M4 | 体检 + 保活 + systemd + 卸载 | ✅ 完成（真机 70/70） |
-| M5 | 用户态后端（reserved）+ rotate + 账户/license | 未开始 |
+| M5 | 用户态后端（reserved）+ rotate 换 IP + switch 在线互换 | ✅ 完成（真机 73/73） |
 | M6 | 栈优先级 + iptables/dnsmasq/ipset 分流 | 未开始 |
 | M7 | WireProxy | 未开始 |
 | M8 | 官方 Linux Client（c/l/r/z/x） | 未开始 |
 | M9 | BBR + 版本自更新 + 打包 | 未开始 |
 
+> 账户 / license / 设备管理（WARP+ 绑定、设备列表、改名、注销）**不做** ——
+> `warpgo account` 只保留一个纯本地只读视图。
+
 ## 用法（M1 已可用）
 
 ```bash
 sudo ./dist/warpgo register            # 注册设备（私钥只在本机生成，绝不外发）
-sudo ./dist/warpgo account             # 查看账户（--json 输出脱敏视图）
-sudo ./dist/warpgo account --refresh   # 从服务端刷新
-sudo ./dist/warpgo account --enable    # 只补做「启用 WARP」这一步
+sudo ./dist/warpgo account             # 查看账户（纯本地读取；--json 输出脱敏视图）
 
 # 生成一份可交给 wg-quick 的配置（逃生口：即使将来 API 变了也能用）
 sudo ./dist/warpgo profile --out /etc/wireguard/warpgo.conf
@@ -123,6 +124,57 @@ journalctl -u warpgod-watch -f          # 巡检时间线，每次都会说"健�
 `down` 会**先停掉这个服务**再拆隧道 —— 否则保活下一轮就把隧道建回来了，
 你会以为 `down` 没生效。（`down --keep-watch` 可以保留它。）
 
+## 后端：内核 or 用户态（M5 已可用）
+
+`reserved` 是 Cloudflare 对 WireGuard 的私有扩展（握手报文里的 3 个字节），
+**香港 / 洛杉矶等部分出口必须带上它才能连通**，而内核 WireGuard 在结构上带不了它。
+为此本工具内嵌了一份标准的 `wireguard-go` 作为"用户态后端"。
+
+```bash
+sudo ./dist/warpgo up --backend userspace   # 强制用户态（会把 reserved 发出去）
+sudo ./dist/warpgo up --backend kernel      # 强制内核（性能最好，但 reserved 发不出去）
+sudo ./dist/warpgo up                       # 默认 auto：先用内核，实测不通再切用户态
+```
+
+`--backend auto`（默认）的取舍：能上内核就上内核（性能），
+真需要 reserved 的地区能自己找到出路（可用性）。
+它只在账户带 reserved 时才会多花一次体检的时间；reserved 全零的账户行为与 M2/M4 一致。
+
+**不做 fork**：上游那些"打过补丁的 wireguard-go"补丁的全部内容就是在收发两个方向
+各改写类型字段的 3 个字节，本工具在 `conn.Bind` 上包一层即可逐字节等价 ——
+于是不必在仓库里养一个一万多行的 fork。
+
+> 顺带一提，这件事只有抓包能看清：服务端会把 reserved **原样盖回它的响应上**
+> （响应变成 `02 RR RR RR`），而 WireGuard 是按 4 字节小端读报文类型的，
+> 所以**只改发送方向必然失败** —— 现象是"包发出去了、服务端也回了、握手永远完不成、
+> 而且没有任何报错"。
+
+## 换出口 IP（M5 已可用）
+
+```bash
+sudo ./dist/warpgo rotate                  # 重新注册，换一个新的 WARP 出口
+sudo ./dist/warpgo rotate --attempts 5     # 最多试 5 次（默认 3）
+```
+
+它会一直注册到"隧道地址确实变了"为止，用新账户重建隧道、体检通过才写盘；
+**任何一步失败都会回退到原账户并把隧道建回来** —— 你的隧道可能是唯一的对外通道。
+成功之后它会顺手把旧设备从服务端注销，并**如实汇报公网出口 IP 有没有变**：
+账户与隧道地址一定会换，但出口 IP 由 Cloudflare 的 PoP 决定（同一 PoP 上的免费账户
+共享出口），所以**可能不变** —— 这两种结果在真机上都遇到过。
+
+它不做流媒体解锁探测（那是另一件事，且依赖第三方页面结构，随时会静默失效）。
+
+## 在线互换（M5 已可用）
+
+```bash
+sudo ./dist/warpgo switch --backend userspace   # 菜单 k：内核 ↔ 用户态
+sudo ./dist/warpgo switch --mode global         # 菜单 g：全局 ↔ 非全局
+```
+
+出口地址不会因为互换而改变（它是账户里分配的固定地址）。
+若保活服务已经装好，`switch` 会**同步改写它的启动参数并重启** ——
+否则它下一轮就按旧参数把隧道重建回去，你会以为 `switch` 没生效。
+
 ## 卸载（M4 已可用）
 
 ```bash
@@ -166,9 +218,15 @@ go test ./...              # 单元测试（不需要 root、不需要网络）
 tests/e2e/m0-lock.sh                   # M0 真机验收（单实例锁，16 项）
 tests/e2e/m1-register.sh               # M1 真机验收（注册 + 隧道，39 项）
 tests/e2e/m2-updown.sh                 # M2 真机验收（幂等 / 零残留 / SSH 安全，38 项）
-tests/e2e/m3-global.sh                 # M3 真机验收（全局 + 回滚，32 项）
+tests/e2e/m3-global.sh                 # M3 真机验收（全局 + 回滚，34 项）
 tests/e2e/m4-watch.sh                  # M4 真机验收（保活 + systemd + 卸载，70 项）
+tests/e2e/m5-userspace.sh              # M5 真机验收（用户态后端 + 抓包验 reserved + 换 IP，73 项）
 ```
+
+`m5-userspace.sh` 会**真的在两套后端之间来回切换**、**真的重新注册一个新账户**
+（所以这台机器的 WARP 出口地址会变、旧设备会被从服务端注销），
+并且用 `tcpdump` 抓包来断言"报文的类型字段里到底带了什么字节" ——
+这是唯一能证明 reserved 真的生效/没生效的办法（见上面那段）。
 
 真机验收脚本会**动真实的网络与 systemd**，所以它们都自带 trap 兜底，
 并且建议用 `setsid` 在后台跑、再挂一个"死人开关"（M3 那个脚本还会**故意断网几秒** ——

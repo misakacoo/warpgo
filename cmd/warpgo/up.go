@@ -9,6 +9,7 @@ import (
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/system"
+	"github.com/misakacoo/warpgo/internal/tunnel"
 )
 
 // cmdUp 是"把隧道拉起来"的手工入口。
@@ -18,6 +19,7 @@ import (
 func (a *app) cmdUp(args []string) int {
 	var (
 		modeStr         string
+		backendStr      string
 		ifName          string
 		mtu             int
 		endpoint        string
@@ -28,6 +30,7 @@ func (a *app) cmdUp(args []string) int {
 	)
 	opts := newOptionSet().
 		Str("--mode", &modeStr).
+		Str("--backend", &backendStr).
 		Str("--ifname", &ifName).
 		Int("--mtu", &mtu).
 		Str("--endpoint", &endpoint).
@@ -40,6 +43,10 @@ func (a *app) cmdUp(args []string) int {
 	}
 
 	mode, err := netcfg.ParseMode(modeStr)
+	if err != nil {
+		return a.fail(err)
+	}
+	backend, err := tunnel.ParseBackend(backendStr)
 	if err != nil {
 		return a.fail(err)
 	}
@@ -79,6 +86,7 @@ func (a *app) cmdUp(args []string) int {
 	opt := ensureOptions{
 		IfName:       ifName,
 		Mode:         mode,
+		Backend:      backend,
 		MTU:          mtu,
 		Endpoint:     endpoint,
 		DNS:          splitList(dnsStr),

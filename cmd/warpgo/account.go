@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -11,18 +10,15 @@ import (
 	"github.com/misakacoo/warpgo/internal/state"
 )
 
+// cmdAccount 打印本机账户。
+//
+// 它是**纯本地**的：读 account.json，不联网、不改任何东西。
+// 账户与设备的管理动作（WARP+ 绑定、设备列表、注销、改名）已按用户决定砍掉，
+// 这里留下的只有一个只读视图 —— 想看"我这台机器现在拿的是哪个 WARP 地址、
+// reserved 是多少"时不必去翻 JSON 文件。
 func (a *app) cmdAccount(args []string) int {
-	var (
-		asJSON  bool
-		refresh bool
-		enable  bool
-		license string
-	)
-	opts := newOptionSet().
-		Bool("--json", &asJSON).
-		Bool("--refresh", &refresh).
-		Bool("--enable", &enable).
-		Str("--license", &license)
+	var asJSON bool
+	opts := newOptionSet().Bool("--json", &asJSON)
 	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
@@ -31,42 +27,6 @@ func (a *app) cmdAccount(args []string) int {
 	acct, code := a.loadAccount()
 	if code != exitOK {
 		return code
-	}
-
-	// 只有明确要求时才联网。默认路径是纯本地读，这样 `warpgo account`
-	// 在没有网络、或被限流时依然可用（排查现场往往正是网络有问题的时候）。
-	if refresh || enable || license != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), apiTimeout)
-		defer cancel()
-		client := cloudflare.New(cloudflare.Options{})
-
-		if enable {
-			if _, err := client.EnableWarp(ctx, acct.ID, acct.Token); err != nil {
-				return a.fail(err)
-			}
-			a.log.Infof("%s", msg.T(msg.KeyAcctEnableOK))
-		}
-
-		if license != "" {
-			if err := client.SetLicense(ctx, acct.ID, acct.Token, license); err != nil {
-				return a.fail(err)
-			}
-			acct.License = license
-			a.log.Infof("%s", msg.T(msg.KeyAcctLicenseOK))
-		}
-
-		if refresh {
-			dev, err := client.GetDevice(ctx, acct.ID, acct.Token)
-			if err != nil {
-				return a.fail(err)
-			}
-			acct.ApplyDevice(dev)
-			a.log.Infof("%s", msg.T(msg.KeyAcctRefreshed))
-		}
-
-		if err := acct.Save(acctPath); err != nil {
-			return a.fail(err)
-		}
 	}
 
 	if asJSON {

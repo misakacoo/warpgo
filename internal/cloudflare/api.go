@@ -5,8 +5,10 @@
 //   - **上游是未公开 API，版本号会变。** 所有版本号与 UA 只出现在本文件顶部的
 //     常量里；上游一改，只动这里、重编译。这是刻意把"易变的东西"收在一个点上。
 //   - **reserved 必须按 base64 原始字节解**（见 reserved.go 的详细说明）。
-//   - 只实现「注册 / 查询 / 启用 / 改名 / 改 license / 注销」。**不做 Teams OAuth** ——
-//     那是 Zero Trust 组织流程，与"拿到 WARP 出口"无关，已按用户决定砍掉。
+//   - 只实现「注册 / 启用 WARP / 注销」三个动作。**不做账户、license、设备管理** ——
+//     WARP+ 绑定、设备列表、改名这些与"拿到 WARP 出口"无关，已按用户决定砍掉；
+//     留下的 DeleteDevice 只服务于 rotate 给自己打扫战场。
+//   - **不做 Teams OAuth** —— 那是 Zero Trust 组织流程，与"拿到出口"无关。
 //   - 网络层可注入（BaseURL / HTTPClient / Rand / Now / Sleep），
 //     所以单测能在无网络、无 root、可控时钟的条件下断言**请求的确切形状**。
 package cloudflare
@@ -189,56 +191,14 @@ func (c *Client) EnableWarp(ctx context.Context, deviceID, token string) (*Devic
 	return &dev, nil
 }
 
-// GetDevice 拉取设备当前状态（含账户类型、用量）。
-func (c *Client) GetDevice(ctx context.Context, deviceID, token string) (*Device, error) {
-	if err := c.requireDevice(deviceID, token); err != nil {
-		return nil, err
-	}
-	var dev Device
-	if err := c.do(ctx, http.MethodGet, c.regPath(deviceID), nil, token, &dev); err != nil {
-		return nil, err
-	}
-	return &dev, nil
-}
-
-// RenameDevice 改设备名（PATCH /reg/{id} {"name":"..."}）。
-func (c *Client) RenameDevice(ctx context.Context, deviceID, token, name string) (*Device, error) {
-	if err := c.requireDevice(deviceID, token); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(name) == "" {
-		return nil, errors.New("设备名不能为空")
-	}
-	var dev Device
-	body := map[string]any{"name": name}
-	if err := c.do(ctx, http.MethodPatch, c.regPath(deviceID), body, token, &dev); err != nil {
-		return nil, err
-	}
-	return &dev, nil
-}
-
-// SetLicense 绑定 WARP+ 的 license（PUT /reg/{id}/account）。
-func (c *Client) SetLicense(ctx context.Context, deviceID, token, license string) error {
-	if err := c.requireDevice(deviceID, token); err != nil {
-		return err
-	}
-	if strings.TrimSpace(license) == "" {
-		return errors.New("license 不能为空")
-	}
-	body := map[string]any{"license": license}
-	return c.do(ctx, http.MethodPut, c.regPath(deviceID)+"/account", body, token, nil)
-}
-
-// UnbindDevice 把设备从账户上解绑（PATCH /reg/{id}/account/reg/{id} {"active":false}）。
-func (c *Client) UnbindDevice(ctx context.Context, deviceID, token string) error {
-	if err := c.requireDevice(deviceID, token); err != nil {
-		return err
-	}
-	body := map[string]any{"active": false}
-	return c.do(ctx, http.MethodPatch, c.regPath(deviceID)+"/account/reg/"+url.PathEscape(deviceID), body, token, nil)
-}
-
 // DeleteDevice 注销设备（DELETE /reg/{id}）。成功时服务端返回 204、无响应体。
+//
+// 它是本项目唯一保留的"设备管理"接口，且**只给 rotate 内部使用**：
+// 每换一次 IP 都会注册一台新设备，不注销旧的就会在账户里越积越多，
+// 几十次之后用户自己也分不清哪台是哪台。
+//
+// 它刻意不暴露成子命令：`注销` 是有风险的破坏性操作，
+// 而它的价值几乎只在"打扫 rotate 自己的战场"这一处。
 func (c *Client) DeleteDevice(ctx context.Context, deviceID, token string) error {
 	if err := c.requireDevice(deviceID, token); err != nil {
 		return err

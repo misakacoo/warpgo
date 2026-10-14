@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/misakacoo/warpgo/internal/cloudflare"
 	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/tunnel"
@@ -15,20 +16,28 @@ import (
 
 // statusView 是 `status --json` 的输出形状（不含任何机密）。
 type statusView struct {
-	IfName     string     `json:"if_name"`
-	Mode       string     `json:"mode"`
-	Backend    string     `json:"backend"`
-	MTU        int        `json:"mtu"`
-	Table      int        `json:"table"`
-	Families   []int      `json:"families,omitempty"`
-	Addrs      []string   `json:"addresses,omitempty"`
-	Endpoint   string     `json:"endpoint,omitempty"`
-	UpSince    time.Time  `json:"up_since"`
-	Exists     bool       `json:"interface_exists"`
-	WGPublic   string     `json:"wg_public_key,omitempty"`
-	WGPort     int        `json:"wg_listen_port,omitempty"`
-	Handshaked bool       `json:"handshaked"`
-	Peers      []peerView `json:"peers,omitempty"`
+	IfName  string `json:"if_name"`
+	Mode    string `json:"mode"`
+	Backend string `json:"backend"`
+	// BackendRequested 是用户当初的要求（auto / kernel / userspace）。
+	// 它与 Backend 一起才能解释"为什么现在是用户态"：是用户指定的，
+	// 还是 auto 在内核不通时自己换过去的。
+	BackendRequested string    `json:"backend_requested,omitempty"`
+	MTU              int       `json:"mtu"`
+	Table            int       `json:"table"`
+	Families         []int     `json:"families,omitempty"`
+	Addrs            []string  `json:"addresses,omitempty"`
+	Endpoint         string    `json:"endpoint,omitempty"`
+	UpSince          time.Time `json:"up_since"`
+	Exists           bool      `json:"interface_exists"`
+	WGPublic         string    `json:"wg_public_key,omitempty"`
+	WGPort           int       `json:"wg_listen_port,omitempty"`
+	Handshaked       bool      `json:"handshaked"`
+	// DaemonRunning 只在用户态后端下有意义。
+	DaemonRunning bool `json:"userspace_daemon_running,omitempty"`
+	// Reserved 是账户里那 3 个字节（内核后端发的是 0,0,0）。
+	Reserved string     `json:"reserved,omitempty"`
+	Peers    []peerView `json:"peers,omitempty"`
 }
 
 type peerView struct {
@@ -73,14 +82,22 @@ func (a *app) cmdStatus(args []string) int {
 		return a.fail(err)
 	}
 
+	// 账户读不出来不是致命错误：status 的核心是"隧道当前什么样"，
+	// 而 reserved 只是补一条线索。读不到就不显示它。
+	reserved := ""
+	if acct, aerr := cloudflare.LoadAccount(state.AccountPath()); aerr == nil {
+		reserved = acct.Reserved.String()
+	}
+	daemon := rt.Backend == string(tunnel.BackendUserspace) && tunnel.DaemonRunning(rt.IfName)
+
 	if asJSON {
 		enc := json.NewEncoder(a.stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(newStatusView(rt, st)); err != nil {
+		if err := enc.Encode(newStatusView(rt, st, daemon, reserved)); err != nil {
 			return a.fail(err)
 		}
 	} else {
-		a.printStatus(rt, st)
+		a.printStatus(rt, st, daemon, reserved)
 	}
 
 	if !st.Exists {
@@ -90,21 +107,24 @@ func (a *app) cmdStatus(args []string) int {
 	return exitOK
 }
 
-func newStatusView(rt *state.Runtime, st tunnel.Status) statusView {
+func newStatusView(rt *state.Runtime, st tunnel.Status, daemon bool, reserved string) statusView {
 	v := statusView{
-		IfName:     rt.IfName,
-		Mode:       rt.Mode,
-		Backend:    rt.Backend,
-		MTU:        rt.MTU,
-		Table:      rt.Table,
-		Families:   rt.Families,
-		Addrs:      rt.Addrs,
-		Endpoint:   rt.Endpoint,
-		UpSince:    rt.UpSince,
-		Exists:     st.Exists,
-		WGPublic:   st.PublicKey,
-		WGPort:     st.ListenPort,
-		Handshaked: st.HasHandshake(),
+		IfName:           rt.IfName,
+		Mode:             rt.Mode,
+		Backend:          rt.Backend,
+		BackendRequested: rt.BackendRequested,
+		MTU:              rt.MTU,
+		Table:            rt.Table,
+		Families:         rt.Families,
+		Addrs:            rt.Addrs,
+		Endpoint:         rt.Endpoint,
+		UpSince:          rt.UpSince,
+		Exists:           st.Exists,
+		WGPublic:         st.PublicKey,
+		WGPort:           st.ListenPort,
+		Handshaked:       st.HasHandshake(),
+		DaemonRunning:    daemon,
+		Reserved:         reserved,
 	}
 	for _, p := range st.Peers {
 		pv := peerView{
@@ -129,19 +149,39 @@ func newStatusView(rt *state.Runtime, st tunnel.Status) statusView {
 //
 // 字段名用 ASCII 固定英文：它们与 runtime.json 里的键一一对应，
 // 翻译反而会让人对不上文件内容。
-func (a *app) printStatus(rt *state.Runtime, st tunnel.Status) {
+func (a *app) printStatus(rt *state.Runtime, st tunnel.Status, daemon bool, reserved string) {
 	fmt.Fprintln(a.stdout, msg.T(msg.KeyStatusTitle))
 
+	backend := rt.Backend
+	if rt.BackendRequested != "" && rt.BackendRequested != rt.Backend {
+		// 把"用户要求"与"实际落到的"并排显示：只看实际值的话，
+		// 一次自动回落会看起来像用户自己指定的用户态后端。
+		backend = fmt.Sprintf("%s（要求 %s）", rt.Backend, rt.BackendRequested)
+	}
 	fields := [][2]string{
 		{"if_name", rt.IfName},
 		{"mode", rt.Mode},
-		{"backend", rt.Backend},
+		{"backend", backend},
 		{"mtu", fmt.Sprint(rt.MTU)},
 		{"table", fmt.Sprint(rt.Table)},
 		{"addresses", joinOrDash(strings.Join(rt.Addrs, ", "))},
 		{"endpoint", joinOrDash(rt.Endpoint)},
 		{"up_since", rt.UpSince.UTC().Format(time.RFC3339)},
 		{"interface_exists", yesNo(st.Exists)},
+	}
+	if reserved != "" {
+		fields = append(fields, [2]string{"reserved", reserved})
+	}
+	if rt.Backend == string(tunnel.BackendUserspace) {
+		if daemon {
+			pid := 0
+			if ds, ok := tunnel.ReadDaemonState(rt.IfName); ok {
+				pid = ds.PID
+			}
+			fields = append(fields, [2]string{"userspace_daemon", fmt.Sprintf("running (PID %d)", pid)})
+		} else {
+			fields = append(fields, [2]string{"userspace_daemon", msg.T(msg.KeyStatusDaemonNone)})
+		}
 	}
 	if st.Exists {
 		fields = append(fields,

@@ -133,11 +133,39 @@ default_is_native && ok "默认路由仍是原生" || bad "默认路由异常"
 # 少了这一步会有一个很隐蔽的故障：这个保险丝还在数秒（它以为自己的超时还没到），
 # 到点后再回滚一遍 —— 恰好把用户在这段时间里重新建立的隧道拆掉，
 # 表现成"莫名其妙掉线"。这里用相对严格的模式匹配，避免把 shell 自己算进去。
-sleep 1
-leftover_guard=$(ps -eo args | grep -cE '^/root/warpgo/dist/warpgo .*rollback-guard' || true)
-[ "$leftover_guard" = 0 ] \
+#
+# 保险丝是**异步**的：它靠轮询（500ms 一次）发现"确认标记"，所以它退出的时刻
+# 总要比 up 返回晚一点点。给它一个轮询周期的时间再断言，否则这条断言会随机红 ——
+# 而它红的时候其实什么坏事都没发生（M5 加了自动换后端之后，一次 up 会先后生出
+# 两个保险丝，这个窗口才被放大到能被观察到）。
+settle_guard() { # $1=最多等几秒
+  local n=$(( ${1:-3} * 5 )) i=0 left
+  while [ "$i" -lt "$n" ]; do
+    left=$(ps -eo args | grep -cE '^/root/warpgo/dist/warpgo .*rollback-guard' || true)
+    [ "$left" = 0 ] && return 0
+    sleep 0.2; i=$((i + 1))
+  done
+  echo "$left"
+  return 1
+}
+leftover=$(settle_guard 5) \
   && ok "主动回滚后保险丝已解除（不会误拆后续隧道）" \
-  || bad "主动回滚后仍有 $leftover_guard 个保险丝在跑 —— 它超时后会误拆后面的隧道"
+  || bad "主动回滚后仍有 $leftover 个保险丝在跑 —— 它超时后会误拆后面的隧道"
+
+# 更本质的一条：主动回滚后再建一条隧道，它必须活得过那个保险丝的超时窗口。
+# 上面那条只证明"进程没了"，这条证明"即便它还在，也不会动手"。
+if "$BIN" up --backend kernel >/dev/null 2>&1 && wait_net 30; then
+  ok "回滚之后仍能把隧道重新拉起来"
+  sleep 3
+  if net_ok && ip link show "$IFACE" >/dev/null 2>&1; then
+    ok "新隧道没有被旧的保险丝碰过"
+  else
+    bad "新隧道被旧的保险丝拆了"
+  fi
+  "$BIN" down >/dev/null 2>&1
+else
+  bad "回滚之后无法重新建立隧道"
+fi
 
 section "4. 命令中断场景：保险丝超时自动回滚"
 # 这是保险丝存在的**唯一理由**：主流程没机会确认（会话断了、进程被杀了……），

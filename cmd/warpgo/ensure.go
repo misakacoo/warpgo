@@ -24,7 +24,11 @@ import (
 
 const (
 	// upTimeout 覆盖"建接口 + 下发配置 + 配路由"，不含后续的联网探测。
-	upTimeout = 90 * time.Second
+	//
+	// 150 秒是给"自动切后端"留的余量：内核试一次（含自检 25 秒）、
+	// 用户态再试一次，两轮加起来在全局模式下可能接近 90 秒。
+	// 超时太紧会让第二次尝试在中途被掐掉，留下一个半成品现场。
+	upTimeout = 150 * time.Second
 
 	// defaultKeepalive 是 WireGuard 的持久保活间隔。WARP 的 NAT 映射存活时间很短，
 	// 25 秒是上游与整个生态的共识值。
@@ -35,6 +39,9 @@ const (
 	// 它必须明显小于保险丝的超时（45s），否则会出现"自检还没跑完、保险丝先拉闸"
 	// 的竞态 —— 那样的失败看起来像随机断网，非常难排查。
 	selfCheckBudget = 25 * time.Second
+
+	// verifyTimeout 是"换个后端再试"之前那次体检的单族超时。
+	verifyTimeout = 8 * time.Second
 )
 
 // anyPrefix4 / anyPrefix6 是两族的全量 AllowedIPs。
@@ -52,6 +59,10 @@ type ensureOptions struct {
 	Mode     netcfg.Mode
 	MTU      int
 	Endpoint string
+
+	// Backend 是**用户请求的**后端；空值（BackendAuto）表示由程序决定 ——
+	// 见 resolveBackends。实际用上的那个由 ensureTunnel 逐个尝试后确定。
+	Backend tunnel.Backend
 
 	// Force 表示先拆再建（无条件重建）。
 	Force bool
@@ -86,27 +97,153 @@ type ensureResult struct {
 	Change tunnel.Change
 	Net    *netcfg.Result
 	RT     *state.Runtime
+	// Backend 是这次实际使用的后端。
+	Backend tunnel.Backend
 	// HardReset 报告是否做过硬复位。
 	HardReset bool
 	// Detail 是一行摘要（给日志与保活用）。
 	Detail string
 }
 
+// resolveBackends 决定这次按什么顺序尝试隧道后端。
+//
+// 三条规则，对应三种用户意图：
+//
+//  1. 用户显式指定了后端 → 只有一个候选，**不做任何回落**。回落会让
+//     `--backend kernel` 变成一个"建议"，用户看到的状态就与命令行说的不一样了。
+//  2. 没指定、且账户没有 reserved → 内核。行为与 M2/M4 逐字节一致。
+//  3. 没指定、且账户带 reserved → 内核优先，用户态作为备选。
+//
+// 第三条是"reserved 一等公民"的落地方式：reserved 是这台设备在握手报文里
+// 应该带的 3 个字节，只有用户态后端带得上；但它只在部分地区是**必需**的，
+// 而用户态的性能明显不如内核。所以先用内核试、实测不通再切 ——
+// 而不是一上来就为了一种"可能并不存在"的限制放弃内核。
+func resolveBackends(requested tunnel.Backend, r cloudflare.Reserved) []tunnel.Backend {
+	if requested.Valid() {
+		return []tunnel.Backend{requested}
+	}
+	if r.IsZero() {
+		return []tunnel.Backend{tunnel.BackendKernel}
+	}
+	return []tunnel.Backend{tunnel.BackendKernel, tunnel.BackendUserspace}
+}
+
+// backendLabel 把后端名翻成给人看的短标签。
+//
+// 映射放在 CLI 层而不是 tunnel 包里：库层只该产出可机读的名字
+// （runtime.json 里存的就是 kernel/userspace），文案归文案。
+func backendLabel(be tunnel.Backend) string {
+	switch be {
+	case tunnel.BackendUserspace:
+		return msg.T(msg.KeyBackendUserspace)
+	case tunnel.BackendKernel:
+		return msg.T(msg.KeyBackendKernel)
+	default:
+		return msg.T(msg.KeyBackendAuto)
+	}
+}
+
 // ensureTunnel 把系统带到"隧道可用"的状态。
 //
 // 它**不取单实例锁** —— 锁由调用方（up / watch）持有，因为持锁的粒度
 // 是"一次完整的动作"，而不是"其中一段"。调用方拿不到锁时不应该进到这里。
+//
+// 后端选择在这一层：先按 resolveBackends 定候选顺序，然后逐个尝试。
+// 只有"候选不止一个"时才会在成功之后多做一次体检 —— 单候选的机器
+// （也就是所有不带 reserved 的机器）行为与 M2/M4 完全一致，不多花一毫秒。
 func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt ensureOptions) (*ensureResult, int) {
+	cands := resolveBackends(opt.Backend, acct.Reserved)
+	for i, be := range cands {
+		cur := opt
+		if i > 0 {
+			// 换后端必须**先拆干净再重来**：内核的 wireguard 接口与用户态的
+			// TUN 是不同的设备类型，前一次留下的接口会让后一次直接失败。
+			cur.Force = true
+		}
+
+		res, code := a.ensureTunnelOnce(ctx, acct, cur, be)
+		if code != exitOK {
+			if i == len(cands)-1 {
+				// 单候选、且账户带 reserved、且用户钉死了内核 ——
+				// 这正是设计文档里退出码 3 的含义："需要 reserved 但后端不支持"。
+				if len(cands) == 1 && be == tunnel.BackendKernel && !acct.Reserved.IsZero() {
+					a.log.Errorf("%s", msg.Tf(msg.KeyUpNeedReserved, acct.Reserved))
+					return nil, exitNeedReserved
+				}
+				return nil, code
+			}
+			a.log.Warnf("%s", msg.Tf(msg.KeyUpBackendFallback, backendLabel(be), exitCodeReason(code)))
+			continue
+		}
+
+		// 单候选，或全局模式（它自己的自检已经验过链路），到此为止。
+		if len(cands) == 1 || opt.Mode == netcfg.ModeGlobal {
+			return res, exitOK
+		}
+
+		detail, err := a.verifyViaTunnel(ctx, acct, res)
+		if err == nil {
+			if i > 0 {
+				a.log.Infof("%s", msg.Tf(msg.KeyUpBackendSwitched, backendLabel(be), detail))
+			} else {
+				a.log.Debugf("%s", msg.Tf(msg.KeyUpBackendOK, backendLabel(be), detail))
+			}
+			return res, exitOK
+		}
+
+		if i == len(cands)-1 {
+			a.log.Errorf("%s", msg.Tf(msg.KeyUpBackendUnfitAll, err))
+			return nil, exitUnhealthy
+		}
+		a.log.Warnf("%s", msg.Tf(msg.KeyUpBackendUnfit, backendLabel(be), err))
+	}
+	// 候选列表为空只可能来自编程错误，但宁可给一个明确的错误码。
+	return nil, exitError
+}
+
+// exitCodeReason 把退出码翻译成一句能给日志用的话。
+func exitCodeReason(code int) string {
+	switch code {
+	case exitUnhealthy:
+		return msg.T(msg.KeyUpReasonUnhealthy)
+	case exitNeedReserved:
+		return msg.T(msg.KeyUpReasonNeedReserved)
+	case exitLockBusy:
+		return msg.T(msg.KeyUpReasonLockBusy)
+	case exitNotDebian:
+		return msg.T(msg.KeyUpReasonNotDebian)
+	default:
+		return msg.T(msg.KeyUpReasonError)
+	}
+}
+
+// ensureTunnelOnce 用**一个**确定的后端把系统带到"隧道可用"的状态。
+//
+// be 是这次实际使用的后端；opt.Backend 里的原值（可能是 auto）会被记进运行态。
+func (a *app) ensureTunnelOnce(ctx context.Context, acct *cloudflare.Account, opt ensureOptions, be tunnel.Backend) (*ensureResult, int) {
 	if opt.IfName == "" {
 		opt.IfName = netcfg.DefaultIfName
 	}
 	if opt.MTU == 0 {
 		opt.MTU = netcfg.DefaultMTU
 	}
+	if !be.Valid() {
+		be = tunnel.BackendKernel
+	}
 
-	cfg, plan, rtState, err := buildTunnel(acct, opt)
+	cfg, plan, rtState, err := buildTunnel(acct, opt, be)
 	if err != nil {
 		return nil, a.fail(err)
+	}
+
+	// 内核后端带不了 reserved —— 这是结构性的，不是缺陷。当账户确实带它
+	// 而我们又在用内核时，把这件事说清楚：用户需要知道"报文里发的是 0,0,0"，
+	// 否则一旦连不上就完全没有线索。
+	if be == tunnel.BackendKernel && !acct.Reserved.IsZero() {
+		a.log.Warnf("%s", msg.Tf(msg.KeyUpPinnedKernel, acct.Reserved))
+	}
+	if be == tunnel.BackendUserspace {
+		a.say(opt.Quiet, msg.KeyUpUserspaceReserved, acct.Reserved)
 	}
 
 	// 上一次变更可能留下了还在等待的保险丝（比如上次自检失败但进程还没退出）：
@@ -131,9 +268,11 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 		if snap, err = newSnapshot(cfg.IfName, plan); err != nil {
 			return nil, a.fail(err)
 		}
-		if err := rollback.ClearConfirm(); err != nil {
-			return nil, a.fail(err)
-		}
+		// 注意这里**不再**"先把确认标记删掉"。
+		//
+		// 标记现在自带身份（那一次变更的 CreatedAt），遗留一份不会影响谁；
+		// 而在这里删掉它反而会把上面那次 Disarm 刚写下的标记吃掉 ——
+		// 上一次变更的保险丝就再也等不到解除，只能守到自己的超时。
 		if err := snap.Save(rollback.SnapshotPath()); err != nil {
 			return nil, a.fail(err)
 		}
@@ -146,14 +285,14 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 
 	if opt.Force {
 		a.say(opt.Quiet, msg.KeyUpForce)
-		if err := a.tearDown(ctx, cfg.IfName); err != nil {
+		if _, _, err := a.tearDown(cfg.IfName); err != nil {
 			a.log.Warnf("%v", err)
 		}
 	}
 
-	a.say(opt.Quiet, msg.KeyUpStart, opt.Mode, cfg.IfName)
+	a.say(opt.Quiet, msg.KeyUpStart, opt.Mode, backendLabel(be), cfg.IfName)
 
-	tun, err := tunnel.NewKernel(cfg.IfName)
+	tun, err := tunnel.New(be, cfg.IfName)
 	if err != nil {
 		return nil, a.fail(err)
 	}
@@ -169,10 +308,10 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 	// （WARP 把当前握手黑洞掉了）。这时唯一的解法是硬复位一次，
 	// 逼它重新握手。注意：出口 IP 不会因此改变 —— 它是账户里分配的固定地址，
 	// 变的只是这一次握手。
-	res := &ensureResult{Plan: plan, Change: ch}
+	res := &ensureResult{Plan: plan, Change: ch, Backend: be}
 	if opt.ResetIfIdle && !ch.LinkCreated && ch.ConfigMatched {
 		a.say(opt.Quiet, msg.KeyUpHardReset)
-		if err := a.tearDown(ctx, cfg.IfName); err != nil {
+		if _, _, err := a.tearDown(cfg.IfName); err != nil {
 			return nil, a.fail(err)
 		}
 		if ch, err = tun.Ensure(ctx, cfg); err != nil {
@@ -216,6 +355,30 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 	return res, exitOK
 }
 
+// verifyViaTunnel 在隧道刚建好之后做一次只读体检：至少一族能经接口拿到 warp=on。
+//
+// 它只在"候选不止一个后端"时被调用 —— 也就是只有带 reserved 的账户会多花
+// 这几秒钟。理由很直接：那种账户才有"这个后端到底行不行"的问题要回答。
+func (a *app) verifyViaTunnel(ctx context.Context, acct *cloudflare.Account, res *ensureResult) (string, error) {
+	if res == nil || res.Plan == nil {
+		return "", errors.New("缺少网络计划，无法体检")
+	}
+	families := res.Plan.Families
+	if len(families) == 0 {
+		families = accountFamilies(acct)
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, selfCheckBudget)
+	defer cancel()
+	r, err := health.ProbeAny(probeCtx, families, health.Options{
+		Interface: res.Plan.IfName,
+		Timeout:   verifyTimeout,
+	})
+	if err != nil {
+		return "", err
+	}
+	return r.String(), nil
+}
+
 // say 按 Quiet 决定是 info 还是 debug。
 //
 // 保活每 5 分钟跑一轮，例行成功的输出如果都用 info，journal 会被
@@ -232,7 +395,7 @@ func (a *app) say(quiet bool, key string, args ...any) {
 //
 // 三样东西一起产出，是因为它们必须来自同一次解析 —— 分开算容易出现
 // "隧道用一个端点、运行态里记另一个"这种对不上的情况。
-func buildTunnel(acct *cloudflare.Account, opt ensureOptions) (tunnel.Config, *netcfg.Plan, *state.Runtime, error) {
+func buildTunnel(acct *cloudflare.Account, opt ensureOptions, be tunnel.Backend) (tunnel.Config, *netcfg.Plan, *state.Runtime, error) {
 	var zeroCfg tunnel.Config
 
 	priv, err := wgconf.ParseKey(acct.PrivateKey)
@@ -271,6 +434,7 @@ func buildTunnel(acct *cloudflare.Account, opt ensureOptions) (tunnel.Config, *n
 		Keepalive:     defaultKeepalive,
 		MTU:           opt.MTU,
 		Addresses:     addrs,
+		Reserved:      acct.Reserved,
 	}
 
 	plan, err := netcfg.Build(addrs, netcfg.Options{IfName: opt.IfName, MTU: opt.MTU, Mode: opt.Mode})
@@ -281,16 +445,17 @@ func buildTunnel(acct *cloudflare.Account, opt ensureOptions) (tunnel.Config, *n
 	cfg.FWMark = plan.FWMark
 
 	rtState := &state.Runtime{
-		IfName:   opt.IfName,
-		Mode:     string(opt.Mode),
-		Backend:  string(tunnel.BackendKernel),
-		MTU:      opt.MTU,
-		Table:    netcfg.TableWarp,
-		FWMark:   plan.FWMark,
-		Families: plan.Families,
-		Addrs:    plan.AddrStrings(),
-		Endpoint: endpoint,
-		UpSince:  time.Now().UTC(),
+		IfName:           opt.IfName,
+		Mode:             string(opt.Mode),
+		Backend:          string(be),
+		BackendRequested: string(opt.Backend),
+		MTU:              opt.MTU,
+		Table:            netcfg.TableWarp,
+		FWMark:           plan.FWMark,
+		Families:         plan.Families,
+		Addrs:            plan.AddrStrings(),
+		Endpoint:         endpoint,
+		UpSince:          time.Now().UTC(),
 	}
 	return cfg, plan, rtState, nil
 }
@@ -367,9 +532,12 @@ func defaultAllowedIPs(addrs []netip.Prefix) []netip.Prefix {
 
 // reportChange 说明这次 Ensure 到底动了什么 —— 幂等性因此变得可观测。
 func (a *app) reportChange(quiet bool, ch tunnel.Change, cfg tunnel.Config) {
-	if ch.LinkCreated {
+	switch {
+	case ch.DaemonStarted:
+		a.say(quiet, msg.KeyUpDaemonStarted, cfg.IfName, cfg.MTU)
+	case ch.LinkCreated:
 		a.say(quiet, msg.KeyUpLinkCreated, cfg.IfName, cfg.MTU)
-	} else {
+	default:
 		// 复用时明确说出来：用户最关心的恰恰是"这次有没有换 IP"。
 		a.say(quiet, msg.KeyUpLinkReused, cfg.IfName)
 	}
@@ -575,19 +743,29 @@ func (a *app) releaseLock(lock *state.Lock) {
 	}
 }
 
-// tearDown 清规则/路由 + 删接口，返回是否真的删掉了接口。
-func (a *app) tearDown(ctx context.Context, ifName string) error {
-	if _, err := netcfg.Cleanup(a.netlog); err != nil {
-		return err
+// tearDown 清规则/路由 + 删接口 + 停用户态守护进程。
+//
+// 返回 (清理统计, 是否真的删掉了接口, error)。
+//
+// 这里刻意**不依赖"当前是哪种后端"**：删接口对两种后端都是同一个动作
+// （用户态那条 TUN 也是一个普通接口），而停守护进程在没有守护进程时是空操作。
+// 于是 down / uninstall 不必先去猜现场是什么状态 —— 猜错的代价是清不干净。
+func (a *app) tearDown(ifName string) (*netcfg.Result, bool, error) {
+	res, err := netcfg.Cleanup(a.netlog)
+	if err != nil {
+		return res, false, err
 	}
 	if ifName == "" {
 		ifName = netcfg.DefaultIfName
 	}
-	tun, err := tunnel.NewKernel(ifName)
+	// ① 删接口。删掉 TUN 会让 wireguard-go 的读循环报错、进而自己退出。
+	deleted, err := netcfg.DeleteLink(ifName)
 	if err != nil {
-		return err
+		return res, deleted, err
 	}
-	defer tun.Close()
-	_, err = tun.TearDown(ctx)
-	return err
+	// ② 收尾：停掉万一还活着的守护进程，清掉状态文件与残留 socket。
+	if serr := tunnel.StopUserspaceDaemon(ifName, a.netlog); serr != nil {
+		return res, deleted, serr
+	}
+	return res, deleted, nil
 }

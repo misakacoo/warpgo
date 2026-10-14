@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/misakacoo/warpgo/internal/netcfg"
@@ -40,8 +41,20 @@ const (
 	DefaultTimeout = 45 * time.Second
 )
 
+// EnvRunDir 可覆盖运行时目录。
+//
+// 与 `internal/tunnel` 用的是**同一个**环境变量与默认值 —— 它们指的是同一个目录，
+// 两处各自硬编码 "/run/warpgo" 迟早会分叉。可覆盖的意义是让真机验收脚本与单测
+// 能在一个不碰 /run 的地方把整套流程跑一遍。
+const EnvRunDir = "WARPGO_RUN_DIR"
+
 // RunDir 返回运行时目录。
-func RunDir() string { return filepath.Join("/run", runDirName) }
+func RunDir() string {
+	if v := strings.TrimSpace(os.Getenv(EnvRunDir)); v != "" {
+		return v
+	}
+	return filepath.Join("/run", runDirName)
+}
 
 // SnapshotPath / ConfirmPath / GuardLogPath 返回各运行时文件的位置。
 func SnapshotPath() string { return filepath.Join(RunDir(), snapshotFile) }
@@ -74,6 +87,9 @@ const (
 	EvRollbackDone
 	// EvNote 一般性提示（参数：说明文字，通常是给排障看的技术细节）。
 	EvNote
+	// EvStale 保险丝发现自己守护的那次变更已经不在待确认状态了（快照被换人或被清掉），
+	// 于是不动手就退出（参数：说明文字）。
+	EvStale
 )
 
 // Logger 接收回滚过程中的事件。
@@ -128,16 +144,39 @@ func Load(path string) (*Snapshot, error) {
 	return &s, nil
 }
 
-// Confirm 写下"配置可用"的标记，令守护进程解除保险。
-func Confirm() error {
+// ConfirmFor 写下"**这一次**变更可用"的标记，令对应的守护进程解除保险。
+//
+// 标记里带的是那一次变更的 CreatedAt —— 这一点很要紧：这块标记是写给
+// **某一个**保险丝看的，不是写给"当前所有保险丝"看的。带上身份之后：
+//
+//   - 旧保险丝不会把新变更的确认误当成自己的（那会让它立刻退出，等于没保险）；
+//   - 新保险丝也不会被上一次遗留的标记骗到（那会让它**一开始就不设防**）。
+//
+// 曾经的实现是"一个不带内容的标记文件 + 每次开始新变更前把它删掉"。
+// 那个设计有个必现的漏洞：删标记的人可能在**旧保险丝还没轮到下一次轮询**时
+// 就把它删了，于是旧保险丝永远等不到解除，一直守到自己的超时。
+// 一旦 up 会因为"自动换后端"而连开两次保险，这个漏洞就会稳定复现。
+func ConfirmFor(createdAt time.Time) error {
+	if createdAt.IsZero() {
+		return errors.New("确认标记必须带上变更的时间戳")
+	}
 	if err := ensureRunDir(); err != nil {
 		return err
 	}
-	stamp := time.Now().UTC().Format(time.RFC3339) + "\n"
+	stamp := createdAt.UTC().Format(time.RFC3339Nano) + "\n"
 	if err := os.WriteFile(ConfirmPath(), []byte(stamp), 0o600); err != nil {
 		return fmt.Errorf("写入确认标记: %w", err)
 	}
 	return nil
+}
+
+// Confirm 确认"当前快照对应的那次变更"。
+func Confirm() error {
+	snap, err := Load(SnapshotPath())
+	if err != nil {
+		return err
+	}
+	return ConfirmFor(snap.CreatedAt)
 }
 
 // Disarm 解除保险丝：让等待中的 guard 进程安全退出、不再回滚。
@@ -148,19 +187,24 @@ func Confirm() error {
 //
 // 少了这一步会有一个很隐蔽的故障：一次失败的 up 留下的保险丝在超时后会再回滚一遍，
 // 把用户随后（在超时窗口内）重新建立的隧道拆掉 —— 看起来像"随机掉线"。
-func Disarm() error { return Confirm() }
-
-// ClearConfirm 删除确认标记。每次开始新的变更前都该调用一次 ——
-// 否则上一次留下的标记会让这一次的守护进程以为"已经被确认了"。
-func ClearConfirm() error {
-	if err := os.Remove(ConfirmPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("清除确认标记: %w", err)
+//
+// 没有待确认的变更时它是空操作（也就没有保险丝需要解除）。
+func Disarm() error {
+	snap, err := Load(SnapshotPath())
+	if errors.Is(err, ErrNoSnapshot) {
+		return nil
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	return ConfirmFor(snap.CreatedAt)
 }
 
 // ClearSnapshot 删除快照，表示"当前没有待回滚的变更"。
 // up 确认成功之后、以及 down 之后都该调用它。
+//
+// 注意它**不**顺手删确认标记：标记自带身份（见 ConfirmFor），遗留一份不会影响谁；
+// 而删掉它有可能吃掉某个保险丝正等着的那一份，让它白守到超时。
 func ClearSnapshot() error {
 	if err := os.Remove(SnapshotPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("删除快照: %w", err)
@@ -168,10 +212,24 @@ func ClearSnapshot() error {
 	return nil
 }
 
-// Confirmed 报告是否已有确认标记。
-func Confirmed() bool {
-	_, err := os.Stat(ConfirmPath())
-	return err == nil
+// ConfirmedFor 报告"我这次变更"是否已被确认（或被主动解除）。
+//
+// 只认与自己时间戳相符的标记：认不出来就当作没有 —— 宁可多守一会儿
+// （超时那一刻还有 stillPending 兜底），也不能因为一个不相干的标记就撤防。
+func ConfirmedFor(createdAt time.Time) bool {
+	raw, err := os.ReadFile(ConfirmPath())
+	if err != nil {
+		return false
+	}
+	got := strings.TrimSpace(string(raw))
+	if got == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339Nano, got)
+	if err != nil {
+		return false
+	}
+	return t.Equal(createdAt.UTC())
 }
 
 // Guard 等待确认；超时未确认就无条件回滚。
@@ -193,11 +251,11 @@ func Guard(timeout time.Duration, snapshotPath string, logf Logger) (bool, error
 	logf(EvArmed, timeout, snapshotPath)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if Confirmed() {
-			// 收到确认就清掉标记并退出：避免它影响下一次变更。
-			if err := ClearConfirm(); err != nil {
-				logf(EvNote, "clear confirm flag: "+err.Error())
-			}
+		if ConfirmedFor(snap.CreatedAt) {
+			// **刻意不删标记**：它是"这一次变更"的，留着不会影响后来者
+			// （它们比的是自己那份 CreatedAt）。而在这里删掉反而会误伤 ——
+			// 万一发起方已经为**下一次**变更写好了标记，删除就等于把它吃掉，
+			// 于是下一次的保险丝也守到超时。
 			logf(EvConfirmed)
 			return false, nil
 		}
@@ -205,10 +263,45 @@ func Guard(timeout time.Duration, snapshotPath string, logf Logger) (bool, error
 	}
 
 	logf(EvTimeout, timeout)
+
+	// 超时了，但先确认"现在还有没有一条等我去回滚的变更"。
+	//
+	// 保险丝是**异步**的：它出生时守护的那次变更可能早就结束了（成功、或被主动
+	// 回滚过），而它自己只是还没轮到下一次轮询。如果这时已经开始了新的变更
+	// （快照被换掉）或现场已清干净（快照被删），无脑拉闸就会把**新**隧道拆掉 ——
+	// 表现成"随机掉线"，而且极难归因。
+	//
+	// 单靠"解除标记"（Disarm）是不够的：标记是一个被消费的文件，谁先看到谁删，
+	// 两个保险丝共用一个标记时必然有一个会漏看。而快照的 CreatedAt 由发起方写入、
+	// 每次变更都不同，用它判断"我还是不是待确认的那一个"是可靠的。
+	if !stillPending(snapshotPath, snap) {
+		logf(EvStale, "等待期间已经开始了新的变更（快照已被更新或清除），本次保险丝不动手")
+		return false, nil
+	}
+
 	if err := Rollback(snap, logf); err != nil {
 		return false, fmt.Errorf("回滚失败: %w", err)
 	}
 	return true, nil
+}
+
+// stillPending 报告"发起时的那次变更是否仍然处于待确认状态"。
+//
+// 判据是快照的 CreatedAt：它由发起方在每次变更开始时写入，两次变更不会相同。
+// 快照不存在（已被 ClearSnapshot 清掉）或已换成别的变更 → 都不该再回滚。
+//
+// born 为 nil 时按"说不清、别动手"处理：保险丝的职责是保护网络，
+// 而误拉闸的代价是拆掉一条本来好好的隧道 —— 两个方向的代价不对称，
+// 所以拿不准时一律不动手。
+func stillPending(snapshotPath string, born *Snapshot) bool {
+	if born == nil {
+		return false
+	}
+	now, err := Load(snapshotPath)
+	if err != nil {
+		return false
+	}
+	return now.CreatedAt.Equal(born.CreatedAt)
 }
 
 // Rollback 把网络恢复到"没有 warpgo 隧道"的状态。

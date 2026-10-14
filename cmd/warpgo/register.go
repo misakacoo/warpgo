@@ -9,7 +9,6 @@ import (
 	"github.com/misakacoo/warpgo/internal/cloudflare"
 	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/state"
-	"github.com/misakacoo/warpgo/internal/wgconf"
 )
 
 // registerTimeout 覆盖「注册 + 启用」两步，含限流重试的退避时间。
@@ -51,41 +50,11 @@ func (a *app) cmdRegister(args []string) int {
 	a.log.Infof("%s", msg.T(msg.KeyRegStart))
 
 	// 私钥在本地生成，只把公钥发出去 —— 服务端从头到尾见不到私钥。
-	kp, err := wgconf.GenerateKeyPair()
-	if err != nil {
-		return a.fail(err)
-	}
-
-	client := cloudflare.New(cloudflare.Options{Locale: locale})
+	// （注册 + 启用这一段与 rotate 共用，见 registerDevice。）
 	ctx, cancel := context.WithTimeout(context.Background(), registerTimeout)
 	defer cancel()
 
-	dev, err := client.Register(ctx, kp.Public.String())
-	if err != nil {
-		return a.fail(err)
-	}
-
-	// 注册出来的设备默认 warp_enabled=false，必须 PATCH 一次才真正可用。
-	//
-	// 失败不致命：账户本身已经有效，稍后可以用 `warpgo account --enable` 补。
-	// 所以这里记下错误、继续保存账户，最后再以非零码退出（让脚本知道没完工）。
-	var enableErr error
-	if d2, eerr := client.EnableWarp(ctx, dev.ID, dev.Token); eerr != nil {
-		enableErr = eerr
-	} else if d2 != nil {
-		// PATCH 的响应只用来补账户信息：**config 一律以注册响应为准**。
-		// 服务端在不同情况下返回的 PATCH 响应完整度并不一致，而注册响应是
-		// 唯一保证带 config 的那一份；混用两者会引入"有时有地址、有时没有"的
-		// 间歇性故障，排查成本极高。
-		if d2.Account.AccountType != "" || d2.Account.ID != "" {
-			dev.Account = d2.Account
-		}
-		if d2.Token != "" {
-			dev.Token = d2.Token
-		}
-	}
-
-	acct, err := cloudflare.FromDevice(dev, kp.Private.String(), kp.Public.String())
+	acct, enableErr, err := a.registerDevice(ctx, locale)
 	if err != nil {
 		return a.fail(err)
 	}
@@ -104,6 +73,7 @@ func (a *app) cmdRegister(args []string) int {
 	a.log.Infof("%s", msg.Tf(msg.KeyRegEndpoint, acct.Endpoint))
 
 	if enableErr != nil {
+		// 账户本身已经有效，只是 PATCH 没成功；记下来但不当致命错误。
 		a.log.Warnf("%s", msg.Tf(msg.KeyRegEnableFailed, enableErr))
 		return exitError
 	}

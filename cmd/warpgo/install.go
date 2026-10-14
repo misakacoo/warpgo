@@ -11,12 +11,56 @@ import (
 	"strings"
 	"time"
 
-	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/keepalive"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/system"
 	"github.com/misakacoo/warpgo/internal/systemd"
+	"github.com/misakacoo/warpgo/internal/tunnel"
 )
+
+// watchUnitParams 是一次"装 / 更新保活单元"的全部参数。
+type watchUnitParams struct {
+	IfName   string
+	Mode     netcfg.Mode
+	Backend  tunnel.Backend
+	Interval time.Duration
+	MTU      int
+	Endpoint string
+	DNS      []string
+}
+
+// renderWatchUnit 生成保活单元的内容。
+//
+// install 与 switch 共用它。这一点很要紧：换后端 / 换模式之后如果不同步改写
+// 单元，保活下一轮就会把你刚切掉的东西重新建回来 —— 用户看到的是"切了没用"，
+// 而且会怀疑 switch 根本没生效。让两条路径生成同一份文本，这类偏差就没有了。
+//
+// backend 为空（auto）时**不写** --backend：让保活在需要时仍能自动换后端。
+func renderWatchUnit(mgr *systemd.Manager, p watchUnitParams) string {
+	args := []string{
+		"watch",
+		"--interval", p.Interval.String(),
+		"--ifname", p.IfName,
+		"--mode", string(p.Mode),
+	}
+	if p.Backend.Valid() {
+		args = append(args, "--backend", string(p.Backend))
+	}
+	if p.MTU > 0 {
+		args = append(args, "--mtu", strconv.Itoa(p.MTU))
+	}
+	if p.Endpoint != "" {
+		args = append(args, "--endpoint", p.Endpoint)
+	}
+	if len(p.DNS) > 0 {
+		args = append(args, "--dns", strings.Join(p.DNS, ","))
+	}
+	return systemd.Render(systemd.UnitParams{
+		BinPath:   mgr.BinPath(),
+		ExecStart: args,
+	})
+}
 
 // cmdInstall 把 warpgo 装成一个开机自启的保活服务。
 //
@@ -27,6 +71,7 @@ func (a *app) cmdInstall(args []string) int {
 	var (
 		ifName      string
 		modeStr     string
+		backendStr  string
 		intervalStr string
 		mtu         int
 		endpoint    string
@@ -36,6 +81,7 @@ func (a *app) cmdInstall(args []string) int {
 	opts := newOptionSet().
 		Str("--ifname", &ifName).
 		Str("--mode", &modeStr).
+		Str("--backend", &backendStr).
 		Str("--interval", &intervalStr).
 		Int("--mtu", &mtu).
 		Str("--endpoint", &endpoint).
@@ -71,6 +117,10 @@ func (a *app) cmdInstall(args []string) int {
 		}
 		mode = m
 	}
+	backend, err := tunnel.ParseBackend(backendStr)
+	if err != nil {
+		return a.fail(err)
+	}
 	if ifName == "" {
 		ifName = netcfg.DefaultIfName
 	}
@@ -93,20 +143,14 @@ func (a *app) cmdInstall(args []string) int {
 	}
 
 	// 2. 单元
-	execArgs := []string{"watch", "--interval", interval.String(), "--ifname", ifName, "--mode", string(mode)}
-	if mtu > 0 {
-		execArgs = append(execArgs, "--mtu", strconv.Itoa(mtu))
-	}
-	if endpoint != "" {
-		execArgs = append(execArgs, "--endpoint", endpoint)
-	}
-	if dns := splitList(dnsStr); len(dns) > 0 {
-		execArgs = append(execArgs, "--dns", strings.Join(dns, ","))
-	}
-
-	content := systemd.Render(systemd.UnitParams{
-		BinPath:   mgr.BinPath(),
-		ExecStart: execArgs,
+	content := renderWatchUnit(mgr, watchUnitParams{
+		IfName:   ifName,
+		Mode:     mode,
+		Backend:  backend,
+		Interval: interval,
+		MTU:      mtu,
+		Endpoint: endpoint,
+		DNS:      splitList(dnsStr),
 	})
 	if err := mgr.WriteUnit(content); err != nil {
 		return a.fail(err)

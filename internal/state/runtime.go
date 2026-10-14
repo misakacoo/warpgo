@@ -19,12 +19,20 @@ var ErrNoRuntime = errors.New("当前没有运行中的 WARP 隧道")
 // 它存在的意义是让 `down` 与 `status` 不必去猜 —— 上游靠解析 `ip` 的输出来
 // 反推当前状态，于是每次格式变化都要重新适配。这里由我们自己写、自己读。
 type Runtime struct {
-	IfName  string `json:"if_name"`
-	Mode    string `json:"mode"`
+	IfName string `json:"if_name"`
+	Mode   string `json:"mode"`
+	// Backend 是**这次实际用上的**后端（kernel / userspace）。
 	Backend string `json:"backend"`
-	MTU     int    `json:"mtu"`
-	Table   int    `json:"table"`
-	FWMark  int    `json:"fwmark,omitempty"`
+	// BackendRequested 是用户**要求的**后端（auto / kernel / userspace）。
+	//
+	// 两个字段都要，因为它们回答的是不同的问题：日志与 status 想看"现在跑的是什么"，
+	// 而保活巡检必须知道你当初是"指定了内核"还是"随便你挑" ——
+	// 后者才允许它在内核不通时自动换到用户态。只看实际值会把 auto 悄悄降级成
+	// 一个永久的钉死选择。
+	BackendRequested string `json:"backend_requested,omitempty"`
+	MTU              int    `json:"mtu"`
+	Table            int    `json:"table"`
+	FWMark           int    `json:"fwmark,omitempty"`
 
 	Families []int    `json:"families"`
 	Addrs    []string `json:"addrs"`

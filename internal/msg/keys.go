@@ -40,9 +40,6 @@ const (
 	// 账户（M1）
 	KeyAcctNone        = "account.none"
 	KeyAcctTitle       = "account.title"
-	KeyAcctRefreshed   = "account.refreshed"
-	KeyAcctEnableOK    = "account.enable_ok"
-	KeyAcctLicenseOK   = "account.license_ok"
 	KeyAcctSecretsHint = "account.secrets_hidden"
 
 	// 状态目录（M1）
@@ -76,6 +73,7 @@ const (
 	KeyGuardRBLink    = "guard.rollback_link"
 	KeyGuardRBDone    = "guard.rollback_done"
 	KeyGuardNote      = "guard.note"
+	KeyGuardStale     = "guard.stale"
 
 	// 确认（M3）
 	KeyConfirmOK   = "confirm.ok"
@@ -168,8 +166,62 @@ const (
 	// 平台
 	KeyPlatformDebian   = "platform.debian"
 	KeyPlatformNotDebia = "platform.not_debian"
-)
 
+	// 隧道后端（M5）
+	//
+	// 三个名字（内核 / 用户态 / 自动）要分别有文案：日志里说的必须是
+	// "现在实际跑的是哪个"，而"自动"是用户能填的一个取值，不是一种后端。
+	KeyBackendKernel    = "backend.kernel"
+	KeyBackendUserspace = "backend.userspace"
+	KeyBackendAuto      = "backend.auto"
+
+	// 用户态后端与 reserved（M5）
+	KeyUpUserspaceReserved  = "up.userspace_reserved"
+	KeyUpPinnedKernel       = "up.pinned_kernel"
+	KeyUpDaemonStarted      = "up.daemon_started"
+	KeyUpBackendFallback    = "up.backend_fallback"
+	KeyUpBackendUnfit       = "up.backend_unfit"
+	KeyUpBackendUnfitAll    = "up.backend_unfit_all"
+	KeyUpBackendSwitched    = "up.backend_switched"
+	KeyUpBackendOK          = "up.backend_ok"
+	KeyUpNeedReserved       = "up.need_reserved"
+	KeyUpReasonUnhealthy    = "up.reason.unhealthy"
+	KeyUpReasonNeedReserved = "up.reason.need_reserved"
+	KeyUpReasonLockBusy     = "up.reason.lock_busy"
+	KeyUpReasonNotDebian    = "up.reason.not_debian"
+	KeyUpReasonError        = "up.reason.error"
+
+	// 换 IP（M5）
+	KeyRotateStart       = "rotate.start"
+	KeyRotateAttempt     = "rotate.attempt"
+	KeyRotateSameAddr    = "rotate.same_address"
+	KeyRotatePicked      = "rotate.picked"
+	KeyRotateOldAddr     = "rotate.old_address"
+	KeyRotateNewAddr     = "rotate.new_address"
+	KeyRotateOldExit     = "rotate.old_exit_ip"
+	KeyRotateExitSame    = "rotate.exit_unchanged"
+	KeyRotateExitChanged = "rotate.exit_changed"
+	KeyRotateExitUnknown = "rotate.exit_unknown"
+	KeyRotateRebuild     = "rotate.rebuild"
+	KeyRotateRestoring   = "rotate.restoring"
+	KeyRotateRestored    = "rotate.restored"
+	KeyRotateFailed      = "rotate.failed"
+	KeyRotateOldDevice   = "rotate.old_device_removed"
+	KeyRotateOldDevFail  = "rotate.old_device_failed"
+
+	// 在线互换（M5）
+	KeySwitchStart     = "switch.start"
+	KeySwitchNoChange  = "switch.no_change"
+	KeySwitchBackend   = "switch.backend"
+	KeySwitchMode      = "switch.mode"
+	KeySwitchUnit      = "switch.unit"
+	KeySwitchDone      = "switch.done"
+	KeySwitchNotDebian = "switch.not_debian"
+
+	// 状态：后端与 reserved（M5）
+	KeyStatusDaemon     = "status.daemon"
+	KeyStatusDaemonNone = "status.daemon_none"
+)
 
 // AllKeys 列出本文件声明的全部 key。
 //
@@ -205,9 +257,6 @@ func AllKeys() []string {
 		KeyRegEndpoint,
 		KeyAcctNone,
 		KeyAcctTitle,
-		KeyAcctRefreshed,
-		KeyAcctEnableOK,
-		KeyAcctLicenseOK,
 		KeyAcctSecretsHint,
 		KeyNeedRoot,
 		KeyUpStart,
@@ -233,6 +282,7 @@ func AllKeys() []string {
 		KeyGuardRBLink,
 		KeyGuardRBDone,
 		KeyGuardNote,
+		KeyGuardStale,
 		KeyConfirmOK,
 		KeyConfirmNone,
 		KeyUpGlobalStart,
@@ -301,5 +351,47 @@ func AllKeys() []string {
 		KeyDownWatchStopped,
 		KeyPlatformDebian,
 		KeyPlatformNotDebia,
+		KeyBackendKernel,
+		KeyBackendUserspace,
+		KeyBackendAuto,
+		KeyUpUserspaceReserved,
+		KeyUpPinnedKernel,
+		KeyUpDaemonStarted,
+		KeyUpBackendFallback,
+		KeyUpBackendUnfit,
+		KeyUpBackendUnfitAll,
+		KeyUpBackendSwitched,
+		KeyUpBackendOK,
+		KeyUpNeedReserved,
+		KeyUpReasonUnhealthy,
+		KeyUpReasonNeedReserved,
+		KeyUpReasonLockBusy,
+		KeyUpReasonNotDebian,
+		KeyUpReasonError,
+		KeyRotateStart,
+		KeyRotateAttempt,
+		KeyRotateSameAddr,
+		KeyRotatePicked,
+		KeyRotateOldAddr,
+		KeyRotateNewAddr,
+		KeyRotateOldExit,
+		KeyRotateExitSame,
+		KeyRotateExitChanged,
+		KeyRotateExitUnknown,
+		KeyRotateRebuild,
+		KeyRotateRestoring,
+		KeyRotateRestored,
+		KeyRotateFailed,
+		KeyRotateOldDevice,
+		KeyRotateOldDevFail,
+		KeySwitchStart,
+		KeySwitchNoChange,
+		KeySwitchBackend,
+		KeySwitchMode,
+		KeySwitchUnit,
+		KeySwitchDone,
+		KeySwitchNotDebian,
+		KeyStatusDaemon,
+		KeyStatusDaemonNone,
 	}
 }

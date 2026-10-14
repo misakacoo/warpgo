@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -240,51 +241,43 @@ func TestEnableWarpRequest(t *testing.T) {
 	}
 }
 
-func TestGetAndDeleteDevice(t *testing.T) {
-	c, calls := newRecorder(t, func(w http.ResponseWriter, call int) {
-		if call == 1 {
-			writeJSON(w, 200, sampleRegisterResponse)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent) // DELETE 返回 204、无响应体
-	})
-
-	if _, err := c.GetDevice(context.Background(), "dev-1", "tok-1"); err != nil {
-		t.Fatal(err)
-	}
-	if (*calls)[0].method != http.MethodGet || (*calls)[0].auth != "Bearer tok-1" {
-		t.Errorf("GET 请求不对: %+v", (*calls)[0])
-	}
-
-	// 204 无响应体时不能当成解析失败。
-	if err := c.DeleteDevice(context.Background(), "dev-1", "tok-1"); err != nil {
-		t.Fatalf("DELETE 204 不该报错: %v", err)
-	}
-	if (*calls)[1].method != http.MethodDelete {
-		t.Errorf("method = %s，期望 DELETE", (*calls)[1].method)
-	}
-}
-
-func TestSetLicenseAndUnbind(t *testing.T) {
+// DeleteDevice 只服务于 rotate（换 IP 之后把旧设备从服务端摘掉），
+// 但它的形状仍要盯住：DELETE /reg/{id}，且 204 无响应体不能被当成解析失败。
+func TestDeleteDevice(t *testing.T) {
 	c, calls := newRecorder(t, func(w http.ResponseWriter, _ int) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	if err := c.SetLicense(context.Background(), "dev-1", "tok-1", "LIC-123"); err != nil {
-		t.Fatal(err)
+	if err := c.DeleteDevice(context.Background(), "dev-1", "tok-1"); err != nil {
+		t.Fatalf("DELETE 204 不该报错: %v", err)
 	}
-	if (*calls)[0].method != http.MethodPut || !strings.HasSuffix((*calls)[0].path, "/account") {
-		t.Errorf("SetLicense 请求不对: %+v", (*calls)[0])
+	got := (*calls)[0]
+	if got.method != http.MethodDelete {
+		t.Errorf("method = %s，期望 DELETE", got.method)
 	}
-	if !strings.Contains(string((*calls)[0].body), "LIC-123") {
-		t.Errorf("请求体应含 license: %s", (*calls)[0].body)
+	if got.path != "/"+APIVersion+"/reg/dev-1" {
+		t.Errorf("path = %s", got.path)
 	}
+	if got.auth != "Bearer tok-1" {
+		t.Errorf("Authorization = %q", got.auth)
+	}
+}
 
-	if err := c.UnbindDevice(context.Background(), "dev-1", "tok-1"); err != nil {
-		t.Fatal(err)
-	}
-	if (*calls)[1].method != http.MethodPatch || !strings.Contains((*calls)[1].path, "/account/reg/") {
-		t.Errorf("Unbind 请求不对: %+v", (*calls)[1])
+// 账户 / license / 设备管理已经砍掉。这里守的是"它们没有被悄悄加回来"：
+// 一个 `warpgo` 只该跟注册、启用、注销三个动作打交道。
+func TestAccountManagementIsGone(t *testing.T) {
+	c := New(Options{BaseURL: "http://127.0.0.1:1"})
+	// 用反射列一遍方法名，出现任何一个被砍掉的动作就红。
+	// 这比逐个删除测试更稳：将来有人"顺手"把它们加回来时会立刻被挡住。
+	banned := []string{"SetLicense", "UnbindDevice", "RenameDevice", "GetDevice", "ListDevices"}
+	typ := reflect.TypeOf(c)
+	for i := 0; i < typ.NumMethod(); i++ {
+		name := typ.Method(i).Name
+		for _, b := range banned {
+			if name == b {
+				t.Errorf("Client.%s 不该存在：账户 / license / 设备管理已按用户决定砍掉", name)
+			}
+		}
 	}
 }
 

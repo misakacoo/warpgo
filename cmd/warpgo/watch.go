@@ -10,12 +10,13 @@ import (
 
 	"github.com/misakacoo/warpgo/internal/cloudflare"
 	"github.com/misakacoo/warpgo/internal/health"
-	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/keepalive"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/system"
+	"github.com/misakacoo/warpgo/internal/tunnel"
 )
 
 // probeTimeout 是单轮体检里每一族的超时。
@@ -35,6 +36,7 @@ func (a *app) cmdWatch(args []string) int {
 	var (
 		intervalStr     string
 		modeStr         string
+		backendStr      string
 		ifName          string
 		mtu             int
 		endpoint        string
@@ -46,6 +48,7 @@ func (a *app) cmdWatch(args []string) int {
 	opts := newOptionSet().
 		Str("--interval", &intervalStr).
 		Str("--mode", &modeStr).
+		Str("--backend", &backendStr).
 		Str("--ifname", &ifName).
 		Int("--mtu", &mtu).
 		Str("--endpoint", &endpoint).
@@ -74,12 +77,21 @@ func (a *app) cmdWatch(args []string) int {
 	// 装上保活之后，保活重建出来的仍是全局模式，不会悄悄降级成非全局。
 	mode := netcfg.ModeNonGlobal
 	families := []int{health.FamilyV4, health.FamilyV6}
+	// 后端的默认值取运行态里记的"用户当初要求的是什么"（auto / kernel / userspace）。
+	//
+	// 注意是**要求**而不是**实际用上的**：如果拿实际值当默认，一次自动回落
+	// 就会把 auto 永久钉死成 userspace —— 之后即使内核本来能用（比如换了地区、
+	// 换了端点），也再不会回到内核。
+	backend := tunnel.BackendAuto
 	if rt, err := state.LoadRuntime(state.RuntimePath()); err == nil {
 		if rt.IfName != "" && ifName == "" {
 			ifName = rt.IfName
 		}
 		if m, merr := netcfg.ParseMode(rt.Mode); merr == nil && modeStr == "" {
 			mode = m
+		}
+		if b, berr := tunnel.ParseBackend(rt.BackendRequested); berr == nil && backendStr == "" {
+			backend = b
 		}
 		if len(rt.Families) > 0 {
 			families = rt.Families
@@ -91,6 +103,13 @@ func (a *app) cmdWatch(args []string) int {
 			return a.fail(err)
 		}
 		mode = m
+	}
+	if backendStr != "" {
+		b, err := tunnel.ParseBackend(backendStr)
+		if err != nil {
+			return a.fail(err)
+		}
+		backend = b
 	}
 	if ifName == "" {
 		ifName = netcfg.DefaultIfName
@@ -121,6 +140,7 @@ func (a *app) cmdWatch(args []string) int {
 	buildOpt := ensureOptions{
 		IfName:       ifName,
 		Mode:         mode,
+		Backend:      backend,
 		MTU:          mtu,
 		Endpoint:     endpoint,
 		DNS:          splitList(dnsStr),
@@ -134,7 +154,7 @@ func (a *app) cmdWatch(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	a.log.Infof("%s", msg.Tf(msg.KeyWatchStart, interval, ifName, mode))
+	a.log.Infof("%s", msg.Tf(msg.KeyWatchStart, interval, ifName, mode, backendLabel(backend)))
 
 	deps := keepalive.Deps{
 		Lock:  a.tryLock,

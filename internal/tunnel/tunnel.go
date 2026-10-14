@@ -6,31 +6,52 @@ package tunnel
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/misakacoo/warpgo/internal/cloudflare"
 	"github.com/misakacoo/warpgo/internal/wgconf"
 )
 
-// Backend 是隧道后端。
+// Backend 是隧道后端。空字符串表示"由调用方决定"（见 ParseBackend）。
 type Backend string
 
 const (
 	// BackendKernel 用内核 WireGuard 模块（性能最好，但设不了 reserved）。
 	BackendKernel Backend = "kernel"
-	// BackendUserspace 用内嵌的 wireguard-go（能在握手报文里带 reserved）。
+	// BackendUserspace 用内嵌的 wireguard-go（能在报文里带上 reserved）。
 	BackendUserspace Backend = "userspace"
 )
 
-// ErrReservedUnsupported 表示当前后端无法设置 reserved。
+// BackendAuto 是"没有指定后端"的取值。
 //
-// 这不是"还没写"的占位：**内核 WireGuard 在设计上就设不了那 3 个字节** ——
-// 它们不在官方 UAPI 键集内，也不在内核的 netlink 接口里。需要 reserved 的地区
-// （HK / JP / LA 的某些出口）必须换用户态后端。
-var ErrReservedUnsupported = errors.New(
-	"内核 WireGuard 无法设置 reserved（那 3 个字节不在内核接口里）；需要 reserved 的地区要用用户态后端")
+// 它不是一个真的后端，只是把"用户没说话"与"用户说要内核"区分开 ——
+// 前者允许自动回落，后者必须严格照办（否则用户会以为开关没生效）。
+const BackendAuto Backend = ""
+
+// ParseBackend 解析 --backend 的取值。
+//
+// 接受 `reserved` 作为 userspace 的别名：在 WARP 语境里"带 reserved 的那个后端"
+// 就是用户态实现，菜单 `k` 与生态里的叫法都是它。
+func ParseBackend(s string) (Backend, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return BackendAuto, nil
+	case "kernel", "k":
+		return BackendKernel, nil
+	case "userspace", "user", "reserved", "go":
+		return BackendUserspace, nil
+	default:
+		return "", fmt.Errorf("不认识的后端 %q（可用 auto / kernel / userspace）", s)
+	}
+}
+
+// Valid 报告它是不是一个已知的具体后端。
+func (b Backend) Valid() bool {
+	return b == BackendKernel || b == BackendUserspace
+}
 
 // Config 是建立一条隧道所需的全部参数。
 type Config struct {
@@ -47,6 +68,13 @@ type Config struct {
 	Keepalive  time.Duration
 	MTU        int
 	Addresses  []netip.Prefix
+
+	// Reserved 是握手报文里紧跟报文头的那 3 个字节（见 cloudflare.Reserved）。
+	//
+	// 它在**用户态后端**里由守护进程在下发前写进每一个出网报文；
+	// 内核后端在结构上做不到（那 3 个字节不在内核的接口里），
+	// 因此当它非零而当前是内核后端时，上层会得到一条明确的提示。
+	Reserved cloudflare.Reserved
 
 	// FWMark 非零时设置 fwmark（全局模式防环路用，M3）。
 	FWMark int
@@ -93,14 +121,14 @@ type Tunnel interface {
 	// 必须是**幂等且温和**的：接口已存在就复用（不重建、不换 IP），
 	// 配置已经一致就连 WireGuard 参数都不重下发（避免无谓的重握手）。
 	// 上游每 5 分钟无条件重建接口，用户看到的就是出口 IP 一直在变。
+	//
+	// 用户态后端的 Ensure 还负责"守护进程该不该在跑"这一层：
+	// 没跑就拉起来、参数（MTU / reserved）变了就换一个。
 	Ensure(ctx context.Context, cfg Config) (Change, error)
 
-	// TearDown 拆除隧道（只删接口）。规则与路由由 netcfg 负责。
+	// TearDown 拆除隧道（只删接口与守护进程）。规则与路由由 netcfg 负责。
 	// 返回是否真的删掉了东西。
 	TearDown(ctx context.Context) (bool, error)
-
-	// SetReserved 设置握手报文的 reserved 字节。内核后端返回 ErrReservedUnsupported。
-	SetReserved(ctx context.Context, r cloudflare.Reserved) error
 
 	// Status 读回当前状态。
 	Status(ctx context.Context) (Status, error)
@@ -116,9 +144,35 @@ type Change struct {
 	LinkUp        bool
 	Configured    bool
 	ConfigMatched bool
+
+	// DaemonStarted 表示这次真的拉起了一个新的用户态守护进程
+	// （内核后端恒为 false）。它同时也是 LinkCreated 的来源之一。
+	DaemonStarted bool
 }
 
 // Any 报告本次是否有任何改动。
 func (c Change) Any() bool {
-	return c.LinkCreated || c.AddrsAdded > 0 || c.LinkUp || c.Configured
+	return c.LinkCreated || c.AddrsAdded > 0 || c.LinkUp || c.Configured || c.DaemonStarted
 }
+
+// New 按后端类型构造一条隧道。
+//
+// 这是两个后端唯一的"分岔点"：造出来之后，上层（netcfg / health / keepalive）
+// 再也看不到它们的区别。reserved 不在这里传 —— 它属于一次具体配置，
+// 由 Ensure 的 Config 提供，免得出现"构造时一个值、下发时另一个值"。
+func New(be Backend, ifName string) (Tunnel, error) {
+	switch be {
+	case BackendUserspace:
+		return NewUserspace(ifName)
+	case BackendKernel:
+		return NewKernel(ifName)
+	default:
+		return nil, fmt.Errorf("不认识的后端 %q", string(be))
+	}
+}
+
+// SupportsReserved 报告该后端能不能把 reserved 写进报文。
+//
+// 只有用户态实现可以：那 3 个字节既不在官方 UAPI 键集内，
+// 也不在内核的 netlink 属性里 —— 这是内核接口层面的既成事实，不是实现缺口。
+func SupportsReserved(be Backend) bool { return be == BackendUserspace }

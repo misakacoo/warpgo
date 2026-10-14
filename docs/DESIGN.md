@@ -6,7 +6,7 @@
 > 不适配 Docker、macOS、路由器（OpenWrt）等平台。
 >
 > - 仓库：`C://Users//momo//Documents//GitHub//warpgo`（本文件即仓库内 `docs/DESIGN.md`，是唯一正式版本）
-> - 状态：**M4 已完成**（保活 + systemd + 卸载）
+> - 状态：**M5 已完成**（用户态后端 + reserved + `rotate` + `switch`）
 > - 编译 / 测试 / 调试**一律在 Debian 上进行**（见 §12）
 > - §14 有两处我方保留意见，待确认（DD 重装系统、Teams OAuth）
 
@@ -36,9 +36,9 @@
 | `4` `6` `d` 装接口/切栈 | `install()` + `stack_switch()` | `netcfg` + `tunnel` | **M2** | 已装则变为"切栈"（改 AllowedIPs 注释） |
 | `o` 临时开关 | `onoff()` | `cli` + `netcfg` | M2 | 关 = 拆接口但保留配置；开 = `up --force` |
 | `n` 获取 IP / 重连 | `net()`（199 行） | `health` + `keepalive` | ✅ M2/M4 | **新语义**：默认先体检，健康不动；`--force` 才重建。保活即 `watch`（M4） |
-| `i` 换 IP（Netflix） | `change_ip()`（214 行） | `cloudflare` + `netcfg` | M5 | 重新注册 + 切 reserved |
-| `g` 全局/非全局切换 | `working_mode_switch()` | `netcfg.route` | M3 | 要连路由一起换，不是只改注释 |
-| `k` 内核↔用户态 | `kernel_reserved_switch()` | `tunnel` + `userspace` | M5 | 同一套实现对两种后端 |
+| `i` 换 IP（Netflix） | `change_ip()`（214 行） | `cloudflare` + `netcfg` | ✅ **M5** | 重新注册换出口；**不做**流媒体解锁探测（见 §8.16） |
+| `g` 全局/非全局切换 | `working_mode_switch()` | `netcfg.route` + `switch` | ✅ M3/M5 | 要连路由一起换，不是只改注释 |
+| `k` 内核↔用户态 | `kernel_reserved_switch()` | `tunnel` + `userspace` | ✅ **M5** | 同一套实现对两种后端；见 §8.2 |
 | `s 4/6/d` 栈优先级 | `stack_priority()` + `result_priority()` | `netcfg.priority` | M6 | Debian 上用 `gai.conf` + `ip rule` 优先级 |
 | `u` 卸载 | `uninstall()`（93 行） | `cmd/uninstall.go` | ✅ **M4**（DNS 还原已实测） | 见 §8.13 的"必须还原清单" |
 | `v` 版本/同步 | `ver()` + `check_cdn()` | `cli.version` | M9 | Go 版无"同步脚本"，改为查新版本 + 可选自更新 |
@@ -54,7 +54,7 @@
 | `h` 帮助 | `help()` + E[6]/C[6] | `cli.help` | M2 | 随功能逐步补全 |
 | 菜单内状态显示 | `check_system_info()` + `menu()` | `health` + `cli.menu` | M2 | IPv4/IPv6 / 模式 / 内核 / 账户类型 |
 | ~~语言选择~~ | `select_language()` + 141 条文案 | `msg` | — | **中英双语已移除**（2026-10-15）：只保留简体中文，见 §8.15 |
-| 账户 / license / 设备 | `api.sh` 的 account 子命令 | `cloudflare.account` | M5 | WARP+ 绑定、设备列表、注销 |
+| 账户 / license / 设备 | `api.sh` 的 account 子命令 | — | — | **已确认砍掉**（2026-10-15）：WARP+ 绑定、设备列表、改名、注销都不做；`warpgo account` 只留一个纯本地的只读视图。唯一保留的设备管理动作是 `rotate` 内部给自己的旧设备收尾 |
 | ~~Team 令牌注册~~ | `api.sh` 的 Teams OAuth 流程 | — | — | **已确认砍掉**（§14.2） |
 | 运行次数统计 | `statistics_of_run-times()` | — | — | **建议默认关闭**远程上报（§8.14） |
 
@@ -115,31 +115,34 @@ cmd/warpgo             CLI / 菜单
 
 ## 6. 目录结构
 
-`✅` 表示已落地（M0–M4），其余为规划中的位置。
+`✅` 表示已落地（M0–M5），其余为规划中的位置。
 
 ```
 warpgo/
 ├── cmd/warpgo/
 │   ├── main.go         ✅ CLI 分派、全局选项、dev 子命令
 │   ├── opts.go         ✅ 极简选项解析（--name value / --name=value）
-│   ├── register.go     ✅ 注册
-│   ├── account.go      ✅ 账户查看
+│   ├── register.go     ✅ 注册（与 rotate 共用 registerDevice）
+│   ├── account.go      ✅ 账户查看（纯本地只读）
 │   ├── profile.go      ✅ wg-quick 配置输出
-│   ├── ensure.go       ✅ 建隧道的共用流程（up 与 watch 走同一份代码）
+│   ├── ensure.go       ✅ 建隧道的共用流程（up / watch / rotate / switch 走同一份）
 │   ├── up.go           ✅ 建立隧道
-│   ├── down.go         ✅ 先停保活，再拆隧道，最后还原 DNS
+│   ├── down.go         ✅ 先停保活，再拆隧道（含用户态守护进程），最后还原 DNS
 │   ├── status.go       ✅ 状态
+│   ├── rotate.go       ✅ 换 IP（换账户 + 回退保护 + 旧设备收尾）
+│   ├── switch.go       ✅ 在线互换后端 / 模式（并同步改写保活单元）
 │   ├── watch.go        ✅ 巡检命令
-│   ├── install.go      ✅ 装成 systemd 服务
+│   ├── install.go      ✅ 装成 systemd 服务（含单元渲染的共用函数）
 │   ├── uninstall.go    ✅ 撤干净（含 DNS 还原）
 │   ├── guard.go        ✅ confirm / rollback-guard
+│   ├── userspace.go    ✅ userspace-daemon（内部命令）
 │   └── dns.go          ✅ resolv.conf 的备份与还原
 ├── internal/
 │   ├── cloudflare/  ✅ api.go types.go reserved.go account.go   # 不做 teams.go
 │   ├── wgconf/      ✅ keys.go profile.go        # X25519 密钥、wg-quick 配置
-│   ├── tunnel/      ✅ tunnel.go kernel.go       # userspace.go / uapi.go 属 M5
+│   ├── tunnel/      ✅ tunnel.go common.go kernel.go userspace.go daemon.go reserved.go
 │   ├── netcfg/      ✅ netcfg.go link.go route.go rulenl.go plan.go apply.go
-│   ├── health/      ✅ probe.go                  # 只读探测（M3 自检 / M4 保活共用）
+│   ├── health/      ✅ probe.go                  # 只读探测（M3 自检 / M4 保活 / M5 换后端共用）
 │   ├── keepalive/   ✅ keepalive.go              # 巡检策略与循环（依赖全部可注入）
 │   ├── rollback/    ✅ rollback.go               # 快照 / 保险丝 / 回滚
 │   ├── systemd/     ✅ systemd.go                # 单元渲染 + systemctl
@@ -153,9 +156,9 @@ warpgo/
 │   ├── proxy/       wireproxy.go                                             # M7
 │   └── cfclient/    install.go mode.go hooks.go                              # M8
 ├── docs/DESIGN.md                                # 本文件（唯一正式版）
-├── tests/e2e/       ✅ m0-lock.sh m1-register.sh m2-updown.sh m3-global.sh m4-watch.sh
+├── tests/e2e/       ✅ m0-lock.sh m1-register.sh m2-updown.sh m3-global.sh m4-watch.sh m5-userspace.sh
 ├── build.sh         ✅ 产出 dist/warpgo
-└── third_party/wireguard-go/                     # vendored，唯一补丁：reserved（M5）
+└── （原计划的 third_party/wireguard-go/ 已**取消** —— 见 §8.2）
 ```
 
 与规划的两处偏差（都已落地，在此说明而不是留成「文档与现实不符」）：
@@ -165,6 +168,9 @@ warpgo/
   放进 `internal/state` 会把依赖方向搞反（底层包不该依赖业务包）。
 - 单元文件不随仓库分发，而是由 `install` 现场渲染 —— `ExecStart` 里要写安装时的
   路径参数，预置一份静态文件反而会与实际不符。
+- **不再 vendor 打过补丁的 wireguard-go**（原计划 `third_party/wireguard-go/`）。
+  真机验证表明补丁的全部内容就是"收发两个方向各改写类型字段的 3 个字节"，
+  在 `conn.Bind` 上包一层即可逐字节等价，见 §8.2。
 
 ---
 
@@ -233,23 +239,97 @@ type Runtime struct {
 **内核 WireGuard 无法设置握手报文里那 3 个字节**。已知事实：
 
 - Xray-core 自 v1.8.0 起新增 `reserved` 参数，注释明确写「香港/洛杉矶部分 IP 必须带 reserved 才能连通」。
-- `bepass-org/warp-plus` 已经 fork 了 wireguard-go 的 device，让 UAPI 支持 reserved。
-- 生态约定：把 reserved 写成注释行 `# Reserved = 171, 85, 205` 交给客户端读
-  （用户机器上跑的正是读这一行的 patched `wireguard-go`）。
+- `bepass-org/warp-plus` fork 了 wireguard-go 的 device 来支持 reserved。
+- 生态约定：把 reserved 写成注释行 `# Reserved = 171, 85, 205` 交给客户端读。
 
-设计：
+#### 那 3 个字节到底写在哪（真机抓包确认）
 
-- `tunnel/kernel.go`：netlink 建 `wireguard` 类型接口 + UAPI 下发；`SetReserved` 返回 `ErrUnsupported`。
-- `tunnel/userspace.go`：内嵌 `third_party/wireguard-go`（唯一补丁 = reserved），
-  并给它加 UAPI 扩展键 `reserved=`，让上层只跟 UAPI 打交道。
-- 选择规则：默认内核；`reserved` 非零且端点属于需要 reserved 的区域、或用户 `--backend userspace`
-  → 切用户态，并在日志里说明原因。
-- `warpgo profile` 输出始终带 `# Reserved = a, b, c` 注释（与生态一致）。
+WireGuard 每个报文的前 4 字节是小端 `uint32` 的报文类型（01 发起 / 02 响应 /
+03 cookie / 04 数据）。**reserved 替换的是它的高 3 字节**（`byte[1:4]`），
+低字节仍是类型。上游补丁就是这么做的：
+
+```go
+// 发送：bepass-org/warp-plus  wireguard/device/peer.go
+if len(buffers[i]) > 3 && buffers[i][0] > 0 && buffers[i][0] < 5 {
+    copy(buffers[i][1:4], peer.reserved[:])
+}
+```
+
+**关键发现（M5 真机抓包，抓了几轮才看清）：服务端会把 reserved 原样盖在它的
+响应上。** 内核后端（发送 `01 00 00 00`）收到的响应是 `02 00 00 00`；
+用户态后端（发送 `01 24 D4 90`）收到的响应就是 `02 24 D4 90`。
+
+而 WireGuard 是按 **4 字节小端**读类型的：
+
+```go
+msgType := binary.LittleEndian.Uint32(packet[:4])   // 0x90D42402 ≠ 2
+```
+
+于是**只做发送方向的"打补丁"必然失败**：包发出去了、服务端也回了、
+握手永远完不成，而且**没有任何报错**（响应被当成未知报文丢掉）。
+所以上游补丁在收包侧还有第二处：
+
+```go
+// 接收：bepass-org/warp-plus  wireguard/device/receive.go
+packet := bufsArrs[i][:size]
+packet[1], packet[2], packet[3] = 0, 0, 0
+msgType := binary.LittleEndian.Uint32(packet[:4])
+```
+
+判据只能靠抓包：`tcpdump -X` 看报文偏移 `0x0010` 那行的最后两组十六进制。
+
+#### 实现形态：包装 Bind，不 vendor 一份 fork
+
+设计文档 v1 写的是「vendor 一份打过补丁的 `third_party/wireguard-go/`」。
+**实测后改成包装 `conn.Bind`**，理由是补丁的全部内容就是上面那两处字节改写：
+
+- 出网报文一定经过 `conn.Bind.Send`；
+- 入网报文一定经过 `conn.Bind.Open` 返回的接收函数。
+
+在这两个位置各包一层即可，**逐字节等价**，于是不必在仓库里养一个一万多行的
+fork（也不必再跟上游同步、不必维护 `replace` 指令）。
+实现见 `internal/tunnel/reserved.go` 的 `ReservedBind`。
+
+> 如果将来 Cloudflare 改的不是"哪几个字节"而是更深的协议行为，
+> 那时再考虑 vendor；现在的证据是：它只改字节。
+
+#### 后端选择：内核优先，实测不通才换
+
+- **内核后端**（`kernel`）性能最好，但结构上带不了那 3 个字节。
+  这条路径上绝对不发 `[0,0,0]` 之外的任何东西 —— 真机抓包守着它。
+- **用户态后端**（`userspace`，别名 `reserved`）用内嵌的 wireguard-go
+  （`device` + `tun` + `ipc` 三个包，走 `golang.zx2c4.com/wireguard` 模块），
+  由 `warpgo userspace-daemon` 这个**独立进程**持有 TUN。
+  - 为什么必须是独立进程：wireguard-go 的设备生命周期 = 持有 TUN 的进程。
+    嵌进 `up` 里的话，命令一退出隧道就没了。
+  - 父进程通过 UAPI socket（`/var/run/wireguard/<if>.sock`）用 `wgctrl`
+    配置它 —— wgctrl 对内核设备与用户态设备一视同仁，所以"加地址 / 下发配置 /
+    读状态"三段与内核后端**共用同一份代码**（`internal/tunnel/common.go`）。
+  - 守护进程把 MTU 与 reserved 记在 `/run/warpgo/userspace-<if>.json` 里；
+    参数变了就换一个进程（`rotate` 换了账户 → reserved 变了，这一步必然发生）。
+
+- **选择规则**（`resolveBackends`）：
+  1. 用户显式 `--backend kernel|userspace` → 只有一个候选，**不做回落**
+     （回落会让 `--backend kernel` 变成一个"建议"，与命令行说的不一致）。
+  2. 没指定且 `reserved` 全零 → 内核。行为与 M2/M4 逐字节一致。
+  3. 没指定且 `reserved` 非零 → **内核优先，用户态兜底**：
+     只有内核实测握不上手（经接口拿不到 `warp=on`）才自动换用户态，
+     并在日志里说明"已自动切换"。
+
+  第 3 条是"reserved 一等公民"的落地方式。它同时满足两个互相拉扯的目标：
+  能用内核就用内核（性能），真需要 reserved 的地区能自己找到出路（可用性）。
+  代价只在"带 reserved 的账户"上多花一次体检的时间。
+
+- 退出码 `3`（需要 reserved 但后端不支持）只在一种情况下出现：
+  用户**钉死**了内核、账户带 reserved、且隧道实测不通。
 
 ### 8.3 建接口
 
 netlink 一次完成：建 `wireguard` 类型 link → 加地址（`172.16.0.2/32`、`2606:4700:110:xxxx::/128`）
 → 设 MTU → 起 link → UAPI 下发（私钥、对端公钥、端点、AllowedIPs、`PersistentKeepalive=25`）。
+
+用户态后端不做 `ip link add` —— TUN 由守护进程 `tun.CreateTUN(name, mtu)` 产生，
+`Ensure` 只是"保证守护进程在跑 + 之后走同一套地址/配置流程"。
 
 **MTU 探测**照搬现在 `best_mtu()` 的策略（1420 起向下试到能过 1500 字节包），
 但用 Go 直接发探测包，不 fork `ping`/`curl`。
@@ -445,6 +525,24 @@ systemd 中止 `restart`。新实现里所有规则必须**成对生成、由同
 `--lang` / `-L`、`KeyBadLang`，以及 `optionSet.parse` 那个「把 key 变成当前语言
 文案」的回调参数（语言只剩一种后，它就只剩一层空转）。
 
+### 8.16 换 IP（`rotate`）为什么不做流媒体/地区探测
+
+上游 `change_ip()` 是"反复重注册 + 用 Netflix 页面判断地区"，刷到能解锁流媒体的
+IP 为止。**我们只做"换一个出口"，不做解锁判定**，理由有三条：
+
+1. 解锁判定要依赖第三方页面（`URL_ORIGINAL` / `URL_REGIONAL`）的 HTML 结构，
+   对方一改页面就静默失效 —— 而上游是靠 awk 正则去匹配 `"requestCountry"` 的。
+2. 它要引 UA 与地区映射表，而那与"拿到 WARP 出口"是两件独立的事。
+3. 反复重注册会撞上注册接口的限流（1015），而"刷到满意为止"没有一个自然上界。
+
+留下的是可以精确定义、可以验收的部分：
+**重新注册，直到隧道地址确实变化；换完体检；失败回退。**
+
+`rotate` 会额外测一次"公网看到的出口 IP"并如实汇报是否变化 —— 因为
+账户与隧道地址**一定**会换，而出口 IP 由 Cloudflare 的 PoP 决定
+（同一 PoP 上的免费账户共享出口），**可能不变**。真机上这两种结果都遇到过，
+所以这一步不是锦上添花：不说清楚，用户会以为 rotate 没生效。
+
 ---
 
 ## 9. CLI 与菜单
@@ -452,24 +550,45 @@ systemd 中止 `restart`。新实现里所有规则必须**成对生成、由同
 子命令（非交互优先，菜单只是它的薄封装）：
 
 ```
-warpgo menu                                   # 交互菜单（等价旧的裸 warp）
-warpgo register | rotate | account ...
-warpgo up [--mode non-global|global] [--family 4|6|d] [--backend kernel|userspace] [--force]
-warpgo down [--keep-watch] | status [--json]
-warpgo watch [--once] [--max-rounds N] [--interval 5m] [--mode ...]
-warpgo install [--interval 5m] [--mode ...] [--no-start]
+warpgo menu                                   # 交互菜单（等价旧的裸 warp）—— M6
+warpgo register [--force] [--locale zh_CN]
+warpgo account [--json]                       # 纯本地读取，不联网
+warpgo profile [--out FILE] [--family ...] [--table-off] [--no-dns]
+warpgo up [--mode non-global|global] [--backend auto|kernel|userspace]
+          [--ifname] [--mtu] [--endpoint] [--dns] [--force] [--no-confirm]
+warpgo down [--ifname] [--keep-watch]
+warpgo status [--json]
+warpgo rotate [--attempts N] [--mode ...] [--backend ...]      # i 换 IP
+warpgo switch [--backend ...] [--mode ...]                     # k 内核↔用户态 / g 全局↔非全局
+warpgo watch [--once] [--max-rounds N] [--interval 5m] [--mode ...] [--backend ...]
+warpgo install [--interval 5m] [--mode ...] [--backend ...] [--no-start]
+warpgo uninstall [--purge] [--keep-binary]
 warpgo confirm
-warpgo switch --mode global        # g
-warpgo switch --backend reserved   # k
-warpgo priority 4|6|d              # s
-warpgo split enable|disable|status # e
-warpgo proxy install|on|off        # w / y
-warpgo client install --mode proxy|warp | on | off    # c / l / r
-warpgo hook add|del                # z / x（隐藏，供 warp-svc 调用）
-warpgo bbr enable|disable          # b
-warpgo uninstall [--purge]
-warpgo version [--check] [--self-update]
+warpgo priority 4|6|d              # s   —— M6
+warpgo split enable|disable|status # e   —— M6
+warpgo proxy install|on|off        # w / y —— M7
+warpgo client install --mode proxy|warp | on | off    # c / l / r —— M8
+warpgo hook add|del                # z / x（隐藏，供 warp-svc 调用）—— M8
+warpgo bbr enable|disable          # b   —— M9
+warpgo version [--check] [--self-update]                —— M9
 ```
+
+内部子命令（不进 help、不由用户调用）：
+`rollback-guard`（由 `up` 派生的回滚保险丝）、
+`userspace-daemon`（由 `up`/`watch` 派生的用户态后端守护进程）。
+
+**`--backend` 的取值**：`auto`（默认，见 §8.2 的三条规则）/ `kernel` / `userspace`。
+`reserved` 是 `userspace` 的别名 —— 在 WARP 语境里"带 reserved 的那个后端"
+就是用户态实现，菜单 `k` 与生态里的叫法都它。
+
+**`rotate`（换 IP）**：重新注册一台设备，直到拿到与当前**不同的隧道地址**
+（判据是"至少一族的地址变了"，因为单栈账户只有一族），然后用新账户重建隧道、
+体检通过才写盘。任何一步失败都会**回退到原账户并把隧道建回来** ——
+用户的隧道可能就是他唯一的对外通道。
+成功后顺带把旧设备从服务端注销（否则每换一次就在账户里留一个孤儿设备）。
+它会额外报告"公网看到的出口 IP 有没有变"：账户与隧道地址一定会换，
+但出口 IP 由 Cloudflare 的 PoP 决定（同一 PoP 上的免费账户共享出口），
+所以**可能不变** —— 用户真正在意的是后者，必须如实说清楚。
 
 退出码：`0` 成功 / `1` 通用错误 / `2` 体检不健康 / `3` 需要 reserved 但后端不支持 /
 `4` 被单实例锁挡住 / `5` 非 Debian 系统。
@@ -524,11 +643,49 @@ WantedBy=multi-user.target
 | **M2** | `tunnel`(内核) + `netcfg` 非全局 + `up/down/status` | ✅ **完成**（2026-10-14）：真机 **38/38** —— 见下方（菜单骨架未做，挪到功能齐了之后单独做） |
 | **M3** | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ **完成**（2026-10-14）：真机 **32/32** —— 见下方 |
 | **M4** | `health` + `keepalive` + systemd + **卸载** | ✅ **完成**（2026-10-14）：真机 **70/70** —— 见下方 |
-| **M5** | 用户态后端 + reserved + `rotate` + 账户/license | 需要 reserved 的区域握手成功；`rotate` 换 IP 后仍 `warp=on`；账户类型显示正确 |
+| **M5** | 用户态后端 + reserved + `rotate` + `switch` | ✅ **完成**（2026-10-15）：真机 **73/73** —— 见下方。<br>（账户 / license / 设备管理按用户决定**砍掉**，不在交付范围内） |
 | **M6** | `s` 栈优先级 + `e` 分流 | 优先级切换后 `curl -4/-6` 出口符合预期；分流开启后命中走 warp、未命中走原生；关闭后 iptables/ipset/dnsmasq 零残留 |
 | **M7** | `w` / `y` WireProxy | socks5 可用；开关后进程 / 单元 / 配置干净 |
 | **M8** | `c` / `l` / `r` 官方 Client + `z` / `x` 钩子 | 三种模式切换正确；`z`/`x` 的 ip rule 加减成对；`r` 开关后 `warp-cli status` 符合预期 |
 | **M9** | `b` BBR + 版本/自更新 + 打包 | BBR 开关与还原正确；静态二进制 + `.deb` 可装可卸；`--check` 能查到新版本 |
+
+**M5 交付**（2026-10-15，真机 Debian 12）：
+
+- `internal/tunnel` 重新分层：`common.go` 收走两种后端**真正共享**的部分
+  （加地址 / 起接口 / 下发配置 / 读状态，全部显式接收 `*wgctrl.Client`），
+  `kernel.go` 只剩"建接口、删接口、读状态"，用户态后端因此没有复制一行业务逻辑。
+  这是"同一套实现对两种后端"的落地方式。
+- `internal/tunnel/reserved.go`：`ReservedBind` —— 出网报文写 reserved、
+  **入网报文抹掉类型字段的高 3 字节**（见 §8.2，后者是真机抓包才发现的必需项）。
+  零 fork：不 vendor 打过补丁的 wireguard-go。
+- `internal/tunnel/userspace.go` + `daemon.go`：用户态后端。
+  `userspace-daemon` 是独立进程（持有 TUN、监听 UAPI socket），
+  父进程用 `wgctrl` 通过 socket 配置它 —— 于是 `up`/`status`/`down` 的代码不变。
+  守护进程把 MTU 与 reserved 记在 `/run/warpgo/userspace-<if>.json` 里，
+  参数变了就换一个进程（`rotate` 换了账户必然触发这一条）。
+- 后端选择（`resolveBackends`）：内核优先，`reserved` 非零时把用户态作为备选，
+  只有内核实测握不上手才自动切；用户显式指定则不做回落。见 §8.2。
+- `cmd/warpgo/rotate.go`：换 IP。重新注册到"隧道地址确实不同"为止，
+  用新账户重建并体检通过才写盘，**任何失败都回退到原账户并把隧道建回来**；
+  成功后把旧设备从服务端注销；如实汇报公网出口 IP 有没有变。
+- `cmd/warpgo/switch.go`：在线互换后端（`k`）与工作模式（`g`）。
+  若保活单元已安装，会**同步改写它的启动参数并重启** —— 否则它下一轮就会
+  按旧参数把隧道重建回去，用户看到的是"切了没用"。
+- 账户 / license / 设备管理**砍掉**：删掉 `SetLicense` / `UnbindDevice` /
+  `RenameDevice` / `GetDevice` 与 `Account.ApplyDevice`（各带一条单测守着"别再长回来"），
+  `warpgo account` 退化成**纯本地只读**视图（`--refresh` / `--enable` / `--license` 一并移除）。
+  唯一保留的写动作是 `rotate` 内部的 `DeleteDevice` —— 不给自己的换 IP 留孤儿设备。
+- **真机 73/73 通过**（详见 §12）：用户态后端双栈 `warp=on`；抓包证明出网/入网报文的
+  类型字段都带着 reserved、而内核后端 4 个报文全是 `xx 00 00 00`；`up` 幂等不重建守护进程；
+  `switch` 往返；`auto` 先选内核并实测验证；端点不通时确实会换后端再试；
+  `rotate` 换了地址且旧设备被注销；两种后端 `down` 后零残留。
+
+**修掉的一个既有缺陷（M5 真机验收逼出来的）**：自动换后端让一次 `up` 会先后生出
+**两个**保险丝，于是"M3 里用解除标记让旧保险丝退出"这条路露了馅 ——
+确认标记是一个**被消费**的文件（谁先看到谁删），两个保险丝共用时必然有一个漏看，
+漏看的那个会在超时后拆掉**后来建立的隧道**。修法不是在标记上再加锁，而是让保险丝
+在拉闸前先自问一句"我守护的那次变更还在不在"（比对快照的 `CreatedAt`）：
+不在就不动手。见 `rollback.stillPending`。
 
 **M4 交付**（2026-10-14，真机 Debian 12）：
 
@@ -581,6 +738,7 @@ WantedBy=multi-user.target
 - `internal/cloudflare`：`Register` / `EnableWarp` / `GetDevice` / `RenameDevice` /
   `SetLicense` / `UnbindDevice` / `DeleteDevice`；`reserved` 按 base64 原始字节解；
   `account --json` 输出脱敏视图（不含私钥与令牌）。**不做 Teams OAuth。**
+  （M5 已按用户决定砍掉其中四个：只剩 `Register` / `EnableWarp` / `DeleteDevice`。）
 - `internal/wgconf`：用 `crypto/ecdh` 生成已 clamp 的 X25519 密钥对（公钥与 RFC 7748
   向量逐字节一致），profile 渲染是确定性输出。
 - 真机验收链路：注册 → 账户 0600 → **重复注册被拒** → profile 0600 → `wg-quick up` →
@@ -599,11 +757,63 @@ WantedBy=multi-user.target
 reserved 解码（`y8eh` / `4A3x` / 非法输入）、UAPI 序列化（字节级，含结尾空行）、
 profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则生成（两模式、"先清后加"的顺序）。
 
+M5 追加：`applyReserved` 的字节级断言（四种报文类型各一条，加"长度不足""未知类型"
+两条不该动的）、`ReservedBind` 的**收发两个方向**（出网写 reserved、入网抹掉类型高位、
+`SetMark` 等必须原样透传、接收错误必须上抛、`sizes` 里夹 0 的槽位不能碰）、
+`ParseBackend` / `resolveBackends` 的候选顺序、`addressesDiffer` 的判据、
+`ParseReservedArg` 命令行往返、以及 `rollback.stillPending`（保险丝该不该拉闸）。
+
 ### 假实现（`tests/fake/`）
 
 - **假 netlink**：断言 ① `up` 三次后规则各 1 条 ② `down` 后完全空
   ③ 模拟"接口已删 + `[detached]` 显示形态"时仍按句柄清干净。
 - **假 UAPI socket**：断言握手序列、`reserved` 确实下发到用户态后端。
+  （M5 之后 reserved 不再走 UAPI，而是在 `conn.Bind` 上收发出网入网报文 ——
+  对应的断言改成了"假 Bind"的形式，见上。）
+
+### M5 真机实测（2026-10-15）
+
+真机 **73/73** 通过（`tests/e2e/m5-userspace.sh`）。这个脚本会**真的在两套后端之间
+来回切换**、**真的重新注册一个新账户**（所以这台机器的 WARP 出口地址会变、
+旧设备会被从服务端注销），靠 trap + 死人开关保证收尾可用。
+
+**怎么判"reserved 到底有没有生效"：抓包，而不是看握手成不成功。**
+
+这一条是整轮里最有价值的方法论。第一版实现只做了发送方向，结果现象是
+"包发出去了、服务端也回了（抓包看得见 92 字节的响应）、握手永远完不成、
+而且**没有任何报错**"。只有把 `tcpdump -X` 的十六进制摊开才看出：
+服务端的响应是 `02 24 D4 90`，而 WireGuard 按 4 字节小端读类型会得到
+`0x90D42402 ≠ 2`，于是被当成未知报文丢掉。补上接收方向的抹字节之后立刻通了。
+
+抓包的三个细节（都踩过）：
+- 类型字段在帧偏移 `0x0010` 那一行 —— `grep -A1` 只会拿到 `0x0000:`（IP 头），
+  必须 `-A2`；用错了的表现是"没抓到"，很难往"取错了行"上想。
+- 那一行末尾还有一列 ASCII 回显，里面可能有空格，所以 `awk '{print $NF}'` 会飘；
+  十六进制部分固定 39 个字符，先 `cut -c1-39` 再取第 7、8 组。
+- 后台起 tcpdump 必须在**本 shell** 里起：用 `$(...)` 起的话它是子 shell 的子进程，
+  主 shell 的 `wait` 等不到它，于是读到一份空结果。
+
+断言（两条方向都要，才排除巧合）：
+- 用户态后端：出网方向出现 `01 + reserved`，且**该方向全部报文**的类型字段都带着
+  同一组字节（含 `04` 数据报文）；入网方向出现 `02 + reserved`。
+- 内核后端：出网方向出现 `0100 0000`，且**全部报文**都是 `xx 00 00 00` ——
+  这才叫"内核结构上带不了那 3 个字节"。
+
+其它：
+- 用户态后端的接口类型是 `tun type tun`（`ip -d link show`），不是内核 `wireguard`；
+  UAPI socket 在 `/var/run/wireguard/warp.sock`；守护进程状态文件在 `/run/warpgo/`。
+- **幂等**：连续两次 `up --backend userspace`，接口创建时间与守护进程 PID 都不变。
+- `switch --backend kernel` 之后守护进程、状态文件、UAPI socket 全部消失。
+- `auto` 先选内核并实测验证通过（运行态 `backend=kernel`）；
+  给一个不通的端点（`--endpoint x:9999`）时日志依次出现
+  "换一个后端再试" → "所有可用后端都没能让隧道真正通起来"，退出码 2。
+- `rotate` 换了设备与隧道地址，旧设备被注销；**reserved 从 `165,254,0` 变成
+  `22,247,116` 之后守护进程跟着换了**（这正是"参数变了就换一个进程"那条路径）。
+  它还会如实汇报公网出口 IP：真机上两种结果都遇到过
+  （一次 `104.28.243.105 → 104.28.211.105` 变了，一次没变）。
+- **零残留**（两种后端各测一遍）：`down` 后接口、策略规则、表 51820、运行态、
+  守护进程、状态文件、UAPI socket 全部消失，系统本身仍能上外网。
+- 顺带把 M0（16/16）、M2（38/38）、M3 全部回归跑了一遍。
 
 ### M4 真机实测（2026-10-14）
 

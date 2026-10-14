@@ -12,13 +12,15 @@ var text = map[string]string{
 
 账户:
   register             注册一个新的 WARP 设备并保存账户
-  account              查看本机账户（--refresh 从服务端拉取最新）
+  account              查看本机账户（纯本地读取，不联网）
   profile              输出可直接交给 wg-quick 的配置（逃生口）
 
 隧道:
   up                   建立隧道（幂等；--mode global 为全局接管）
   down                 拆除隧道并清空全部残留
   status               查看当前状态（--json 给脚本用）
+  rotate               重新注册换一个 WARP 出口地址
+  switch               在线互换后端（内核 / 用户态）或工作模式
 
 保活:
   watch                巡检：健康就不动，断了才重建
@@ -31,6 +33,14 @@ var text = map[string]string{
   help                 显示本帮助
   dev lock             演练单实例锁（开发调试用）
   dev platform         检查本机是否 Debian
+
+常用选项:
+  --backend auto|kernel|userspace
+                       隧道后端；auto 会先用内核，实测不通再切用户态
+  --mode non-global|global
+                       出口接管方式；默认非全局（不会切断 SSH）
+  --ifname / --mtu / --endpoint / --dns
+                       接口名 / MTU / 对端端点 / 隧道内 DNS
 
 全局选项:
   -v, --verbose        调试日志
@@ -63,15 +73,12 @@ var text = map[string]string{
 	KeyRegExists:       "%s 已存在账户；重新注册会更换你的 WARP IP —— 确实要这样做请加 --force",
 	KeyRegReservedOK:   "reserved = %s（由 client_id %q 解出）",
 	KeyRegReservedNone: "服务端没有返回 client_id，reserved 记为 0, 0, 0 —— 在需要 reserved 的地区握手可能被丢弃",
-	KeyRegEnableFailed: "无法在该设备上启用 WARP: %v（账户已保存，可稍后执行 `warpgo account --enable` 重试）",
+	KeyRegEnableFailed: "无法在该设备上启用 WARP: %v（账户已保存，可执行 `warpgo up` 前先重试 register）",
 	KeyRegAddr:         "接口地址: %s",
 	KeyRegEndpoint:     "对端端点: %s",
 
 	KeyAcctNone:        "本机还没有账户 —— 请先执行 `warpgo register`",
 	KeyAcctTitle:       "WARP 账户",
-	KeyAcctRefreshed:   "已从服务端刷新账户信息",
-	KeyAcctEnableOK:    "已在该设备上启用 WARP",
-	KeyAcctLicenseOK:   "已为该账户绑定 license",
 	KeyAcctSecretsHint: "私钥与访问令牌保存在 %s，此处刻意不显示",
 
 	KeyNeedRoot: "无法准备状态目录 %s（注册需要 root 权限，或把 WARPGO_ETC 指向可写目录）",
@@ -82,11 +89,11 @@ var text = map[string]string{
 内核 WireGuard 会忽略 "# Reserved" 这一行，原因见 docs/DESIGN.md §8.2。`,
 	KeyProfSaved:      "wg-quick 配置已写入 %s（权限 %s）",
 	KeyProfSkipped:    "账户没有 %s 地址，已跳过该族",
-	KeyProfKernelWarn: "注意：本配置带 reserved = %s，但内核 WireGuard 模块设置不了那 3 个字节 —— 需要 reserved 的地区要用用户态后端（里程碑 M5）",
+	KeyProfKernelWarn: "注意：本配置带 reserved = %s，而内核 WireGuard 模块设置不了那 3 个字节 —— 需要 reserved 的地区请用 `warpgo switch --backend userspace`",
 	KeyProfTableOffHint: "Table = off：本配置不接管任何路由。IPv4 仍可用，因为接口持有地址、内核允许按出接口直发；" +
 		"IPv6 必须有明确路由（M2 的非全局模式会负责这件事）。",
 
-	KeyUpStart:       "正在建立 WARP 隧道（模式 %s，接口 %s）",
+	KeyUpStart:       "正在建立 WARP 隧道（模式 %s，后端 %s，接口 %s）",
 	KeyUpLinkCreated: "已创建接口 %s（MTU %d）",
 	KeyUpLinkReused:  "接口 %s 已存在，直接复用（不重建、不换 IP）",
 	KeyUpAddrs:       "接口地址: %s",
@@ -97,6 +104,26 @@ var text = map[string]string{
 	KeyUpForce:       "--force：会先拆掉现有隧道再重建",
 	KeyUpDone:        "WARP 隧道已就绪（%s 模式）",
 	KeyUpNotDebian:   "建立隧道会改动系统网络，因此拒绝在 %s 上运行",
+
+	KeyBackendKernel:    "内核",
+	KeyBackendUserspace: "用户态",
+	KeyBackendAuto:      "自动",
+
+	KeyUpUserspaceReserved: "用户态后端会把 reserved = %s 写进每个出网报文",
+	KeyUpPinnedKernel:      "现在用的是内核后端，而本账户带 reserved = %s —— 内核在报文里发的是 0, 0, 0。多数地区不受影响，若隧道不通请改用 --backend userspace",
+	KeyUpDaemonStarted:     "已拉起用户态守护进程并创建接口 %s（MTU %d）",
+	KeyUpBackendFallback:   "%s后端没能把隧道建起来（%s），改用下一个后端重试",
+	KeyUpBackendUnfit:      "%s后端建立后经隧道仍拿不到 warp=on（%v），换一个后端再试",
+	KeyUpBackendUnfitAll:   "所有可用后端都没能让隧道真正通起来，最后一个失败原因: %v",
+	KeyUpBackendSwitched:   "已自动切换到%s后端并验证通过: %s",
+	KeyUpBackendOK:         "%s后端验证通过: %s",
+	KeyUpNeedReserved:      "内核实测握不上手，而本账户需要 reserved = %s —— 请去掉 --backend kernel（让程序自己选），或直接用 --backend userspace",
+
+	KeyUpReasonUnhealthy:    "隧道不通",
+	KeyUpReasonNeedReserved: "需要 reserved 但当前后端不支持",
+	KeyUpReasonLockBusy:     "被单实例锁挡住",
+	KeyUpReasonNotDebian:    "不是 Debian 系统",
+	KeyUpReasonError:        "执行出错",
 
 	KeyDownStart:   "正在拆除 WARP 隧道",
 	KeyDownNothing: "没有需要拆除的东西（接口、残留规则与路由都不存在）",
@@ -110,6 +137,8 @@ var text = map[string]string{
 	KeyStatusProbeFail:   "经隧道探测失败: %s",
 	KeyStatusHandshake:   "最近握手: %s",
 	KeyStatusNoHandshake: "尚未握手",
+	KeyStatusDaemon:      "用户态守护进程: %s（PID %d）",
+	KeyStatusDaemonNone:  "用户态守护进程: 未运行",
 
 	KeyNetRemovedRule: "已删除规则: %s",
 	KeyNetAddedRule:   "已添加规则: %s",
@@ -126,6 +155,7 @@ var text = map[string]string{
 	KeyGuardRBLink:    "回滚 3/3：删除接口 %s",
 	KeyGuardRBDone:    "回滚完成：网络已回到没有 WARP 隧道的状态",
 	KeyGuardNote:      "（细节）%s",
+	KeyGuardStale:     "保险丝超时了，但它守护的那次变更已经不在待确认状态（快照被新的变更换掉或被清除了）—— 不动手，直接退出。%s",
 
 	KeyConfirmOK:   "已确认配置可用，保险丝解除",
 	KeyConfirmNone: "当前没有待确认的变更（没有未确认的改动）",
@@ -139,7 +169,7 @@ var text = map[string]string{
 	KeyUpNoConfirm:    "--no-confirm：配置已应用但未确认；%s 内不执行 `warpgo confirm` 就会自动回滚",
 	KeyUpGlobalDone:   "全局模式已生效（所有流量经 WARP）",
 
-	KeyWatchStart:      "保活巡检已启动：每 %s 一次（接口 %s，模式 %s）",
+	KeyWatchStart:      "保活巡检已启动：每 %s 一次（接口 %s，模式 %s，后端 %s）",
 	KeyWatchRound:      "第 %d 轮",
 	KeyWatchHealthy:    "链路正常（%s）—— 未做任何改动",
 	KeyWatchUnhealthy:  "链路已断：%v —— 开始重建",
@@ -185,4 +215,33 @@ var text = map[string]string{
 
 	KeyPlatformDebian:   "系统检查: Debian %s",
 	KeyPlatformNotDebia: "本命令只支持 Debian（检测到: %s）",
+
+	// 换 IP（M5）
+	//
+	// 语义：重新注册，直到拿到一个与旧地址不同的 WARP 出口。
+	KeyRotateStart:       "正在换一个新的 WARP 出口地址（重新注册，最多尝试 %d 次）",
+	KeyRotateAttempt:     "第 %d 次尝试：正在注册新的 WARP 设备……",
+	KeyRotateSameAddr:    "注册出来的地址与当前完全相同（%s），继续再试一次",
+	KeyRotatePicked:      "已选定的新地址: %s",
+	KeyRotateOldAddr:     "当前地址: %s",
+	KeyRotateNewAddr:     "新地址:   %s",
+	KeyRotateOldExit:     "当前公网出口 IP: %s",
+	KeyRotateExitSame:    "出口 IP 仍然是 %s —— 账户与隧道地址确实换了，但这个 PoP 上用的是共享出口，所以公网看到的地址没变。想换到别的地区可以多试几次，或配合 --endpoint 指定别的入口",
+	KeyRotateExitChanged: "公网出口 IP 已变化: %s → %s",
+	KeyRotateExitUnknown: "公网出口 IP 没能测出来（隧道未运行或探测失败），无法比较换了没有",
+	KeyRotateRebuild:     "正在用新账户重建隧道",
+	KeyRotateRestoring:   "换地址没能通起来 —— 正在恢复原账户并重建（保证网络可用比换 IP 重要）",
+	KeyRotateRestored:    "已恢复原账户与隧道（%s），出口地址未变",
+	KeyRotateFailed:      "换 IP 失败: %v",
+	KeyRotateOldDevice:   "已从服务端注销旧设备 %s（避免孤儿设备在账户里越积越多）",
+	KeyRotateOldDevFail:  "旧设备 %s 未能从服务端注销（不影响使用，只是会留在设备列表里）: %v",
+
+	// 在线互换（M5）
+	KeySwitchStart:     "正在在线互换设置（会重建隧道）",
+	KeySwitchNoChange:  "设置没有任何变化（后端 %s，模式 %s）—— 未做任何改动",
+	KeySwitchBackend:   "隧道后端: %s → %s",
+	KeySwitchMode:      "工作模式: %s → %s",
+	KeySwitchUnit:      "保活单元的启动参数已同步更新并重启（否则它下一轮会把它建回来）",
+	KeySwitchDone:      "互换完成：后端 %s，模式 %s，出口地址不变",
+	KeySwitchNotDebian: "互换设置会重构系统网络，因此拒绝在 %s 上运行",
 }

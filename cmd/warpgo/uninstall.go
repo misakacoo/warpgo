@@ -99,7 +99,7 @@ func (a *app) cmdUninstall(args []string) int {
 			name = netcfg.DefaultIfName
 		}
 	}
-	if err := a.tearDown(ctx, name); err != nil {
+	if _, _, err := a.tearDown(name); err != nil {
 		a.log.Warnf("%v", err)
 	}
 	if err := state.RemoveRuntime(state.RuntimePath()); err != nil {

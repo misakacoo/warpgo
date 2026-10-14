@@ -66,6 +66,8 @@ func (a *app) guardLog(ev rollback.Event, args ...any) {
 		a.log.Warnf("%s", msg.T(msg.KeyGuardRBDone))
 	case rollback.EvNote:
 		a.log.Debugf("%s", msg.Tf(msg.KeyGuardNote, args...))
+	case rollback.EvStale:
+		a.log.Warnf("%s", msg.Tf(msg.KeyGuardStale, args...))
 	default:
 		a.log.Debugf("rollback event %d: %v", int(ev), args)
 	}

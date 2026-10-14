@@ -69,6 +69,10 @@ func run(args []string) int {
 		return a.cmdDown(cmdArgs)
 	case "status":
 		return a.cmdStatus(cmdArgs)
+	case "rotate":
+		return a.cmdRotate(cmdArgs)
+	case "switch":
+		return a.cmdSwitch(cmdArgs)
 	case "watch":
 		return a.cmdWatch(cmdArgs)
 	case "install":
@@ -80,6 +84,9 @@ func run(args []string) int {
 	case "rollback-guard":
 		// 内部命令：由 up 派生，不进 help 列表。
 		return a.cmdRollbackGuard(cmdArgs)
+	case "userspace-daemon":
+		// 内部命令：由 up / watch 派生，不进 help 列表。见 cmdUserspaceDaemon。
+		return a.cmdUserspaceDaemon(cmdArgs)
 	case "dev":
 		return a.cmdDev(cmdArgs)
 	default:
