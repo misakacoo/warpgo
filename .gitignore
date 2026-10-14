@@ -1,0 +1,17 @@
+# 构建产物
+/dist/
+/warpgo
+/warpgo.exe
+*.test
+*.out
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 本地临时
+/tmp/
+*.log
