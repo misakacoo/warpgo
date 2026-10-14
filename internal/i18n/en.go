@@ -77,6 +77,38 @@ Kernel WireGuard ignores the "# Reserved" line; see docs/DESIGN.md §8.2.`,
 	KeyProfTableOffHint: "Table = off: this config takes over no routes. IPv4 still works because the interface owns an address " +
 		"and the kernel honours the outgoing interface; IPv6 needs explicit routes (M2's non-global mode will handle that).",
 
+	KeyUpStart:        "bringing up the WARP tunnel (mode %s, interface %s)",
+	KeyUpLinkCreated:  "created interface %s (MTU %d)",
+	KeyUpLinkReused:   "interface %s already exists -- reusing it (no rebuild, no new IP)",
+	KeyUpAddrs:        "interface addresses: %s",
+	KeyUpConfigured:   "pushed WireGuard configuration",
+	KeyUpCfgMatched:   "WireGuard configuration already matches -- left untouched (avoids a needless re-handshake)",
+	KeyUpNetcfg:       "applied network config: %d route(s), %d rule(s)",
+	KeyUpCleaned:      "cleaned up %d stale rule(s) first",
+	KeyUpForce:        "--force: the existing tunnel will be torn down first",
+	KeyUpDone:         "WARP tunnel is up (%s mode)",
+	KeyUpNotDebian:    "bringing up a tunnel changes system networking, so this refuses to run on %s",
+
+	KeyDownStart:   "tearing down the WARP tunnel",
+	KeyDownNothing: "nothing to tear down (no interface, no leftover rules or routes)",
+	KeyDownSummary: "removed %d rule(s), flushed %d route(s)",
+	KeyDownDone:    "tunnel is down; no leftovers",
+
+	KeyStatusTitle:       "WARP tunnel status",
+	KeyStatusNoRuntime:   "no tunnel is up (no runtime state on disk)",
+	KeyStatusIfaceGone:   "interface %s is gone -- leftover rules/routes may remain, run `warpgo down`",
+	KeyStatusProbeOK:     "egress via tunnel: %s (%s) warp=%s",
+	KeyStatusProbeFail:   "probe via the tunnel failed: %s",
+	KeyStatusHandshake:   "last handshake: %s",
+	KeyStatusNoHandshake: "no handshake yet",
+
+	KeyNetRemovedRule: "removed rule: %s",
+	KeyNetAddedRule:   "added rule: %s",
+	KeyNetAddedRoute:  "added route: %s",
+	KeyNetFlushed:     "flushed %d route(s) from table %d",
+	KeyNetDeletedLink: "deleted interface %s",
+	KeyNetRefuseTable: "refusing to touch system routing table %d",
+
 	KeyPlatformDebian:   "system check: Debian %s",
 	KeyPlatformNotDebia: "this command only supports Debian (detected: %s)",
 }

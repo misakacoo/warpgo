@@ -106,20 +106,35 @@ const DefaultWARPPort = "2408"
 // 三件事都要处理：缺端口、端口为 0、裸 IPv6 字面量需要加方括号。
 func (e Endpoint) HostPort() string {
 	for _, cand := range []string{e.Host, e.V6, e.V4} {
-		s := strings.TrimSpace(cand)
-		if s == "" {
-			continue
+		if v := literalHostPort(cand); v != "" {
+			return v
 		}
-		if host, port, err := net.SplitHostPort(s); err == nil {
-			if port == "" || port == "0" {
-				return net.JoinHostPort(host, DefaultWARPPort)
-			}
-			return s
-		}
-		// 没有端口（也可能是裸 IPv6 字面量）—— 交给 JoinHostPort 补方括号。
-		return net.JoinHostPort(strings.Trim(s, "[]"), DefaultWARPPort)
 	}
 	return ""
+}
+
+// HostPortV4 返回 **IPv4 字面量**端点（补上正确端口）。
+//
+// 建隧道时要它而不是 HostPort：字面量不经过 DNS，而 host 是域名。
+// 本项目的取值链一度全靠 DNS，DNS 一抖就整条链失败 —— 能不查就不查。
+func (e Endpoint) HostPortV4() string { return literalHostPort(e.V4) }
+
+// HostPortV6 返回 **IPv6 字面量**端点。
+func (e Endpoint) HostPortV6() string { return literalHostPort(e.V6) }
+
+func literalHostPort(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if host, port, err := net.SplitHostPort(s); err == nil {
+		if port == "" || port == "0" {
+			return net.JoinHostPort(host, DefaultWARPPort)
+		}
+		return s
+	}
+	// 没有端口（也可能是裸 IPv6 字面量）—— 交给 JoinHostPort 补方括号。
+	return net.JoinHostPort(strings.Trim(s, "[]"), DefaultWARPPort)
 }
 
 // Time 容忍 CF 返回的多种时间形态：ISO8601 字符串、{} 空对象、null、数字。

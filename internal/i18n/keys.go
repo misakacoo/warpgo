@@ -47,6 +47,42 @@ const (
 	// 状态目录（M1）
 	KeyNeedRoot = "state.need_root"
 
+	// 建立隧道（M2）
+	KeyUpStart        = "up.start"
+	KeyUpLinkCreated  = "up.link_created"
+	KeyUpLinkReused   = "up.link_reused"
+	KeyUpAddrs        = "up.addresses"
+	KeyUpConfigured   = "up.configured"
+	KeyUpCfgMatched   = "up.config_matched"
+	KeyUpNetcfg       = "up.netcfg_applied"
+	KeyUpCleaned      = "up.cleaned_old"
+	KeyUpForce        = "up.force_teardown"
+	KeyUpDone         = "up.done"
+	KeyUpNotDebian    = "up.not_debian"
+
+	// 拆除隧道（M2）
+	KeyDownStart   = "down.start"
+	KeyDownNothing = "down.nothing"
+	KeyDownSummary = "down.summary"
+	KeyDownDone    = "down.done"
+
+	// 状态（M2）
+	KeyStatusTitle       = "status.title"
+	KeyStatusNoRuntime   = "status.no_runtime"
+	KeyStatusIfaceGone   = "status.interface_missing"
+	KeyStatusProbeOK     = "status.probe_ok"
+	KeyStatusProbeFail   = "status.probe_failed"
+	KeyStatusHandshake   = "status.handshake"
+	KeyStatusNoHandshake = "status.no_handshake"
+
+	// 网络配置明细（M2）
+	KeyNetRemovedRule = "netcfg.removed_rule"
+	KeyNetAddedRule   = "netcfg.added_rule"
+	KeyNetAddedRoute  = "netcfg.added_route"
+	KeyNetFlushed     = "netcfg.flushed_routes"
+	KeyNetDeletedLink = "netcfg.deleted_link"
+	KeyNetRefuseTable = "netcfg.refuse_system_table"
+
 	// profile（M1）
 	KeyProfNote         = "profile.note"
 	KeyProfSaved        = "profile.saved"

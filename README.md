@@ -10,13 +10,13 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 
 ## 状态
 
-按里程碑推进。当前：**M1 完成（注册 / reserved / profile 生成）**
+按里程碑推进。当前：**M2 完成（建立隧道 + 非全局出口 + up/down/status）**
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M0 | 骨架、单实例锁、i18n、日志 | ✅ 完成 |
 | M1 | 注册 / reserved / profile 生成 | ✅ 完成（真机 39/39） |
-| M2 | 内核后端 + 非全局出口 + up/down/status + 菜单骨架 | 未开始 |
+| M2 | 内核后端 + 非全局出口 + up/down/status | ✅ 完成（真机 38/38） |
 | M3 | 全局模式 + fwmark 防环路 + watchdog 回滚 | 未开始 |
 | M4 | 体检 + 保活 + systemd + 卸载 | 未开始 |
 | M5 | 用户态后端（reserved）+ rotate + 账户/license | 未开始 |
@@ -44,6 +44,25 @@ sudo wg-quick up warpgo.conf
 
 `--family 4|6|d` 选地址族（默认 `d`）。若账户只有单栈，配置会自动只保留可用的那一族
 （而不是留下一个 `::/0` 却没有 v6 地址的静默黑洞）。
+
+## 起隧道（M2 已可用）
+
+```bash
+sudo ./dist/warpgo up        # 建接口 + 配 WireGuard + 加策略路由（默认非全局）
+sudo ./dist/warpgo status    # 看状态（--json 给脚本用）
+sudo ./dist/warpgo down      # 拆隧道并清空现场
+```
+
+**默认是「非全局」**：只有**以 WARP 接口地址为源**的流量走 WARP，本机自己的流量仍走原生。
+这意味着它天然不会切断 SSH —— 在服务器上这不是可选项，是底线。
+
+```bash
+curl -4 -s https://1.1.1.1/cdn-cgi/trace | grep warp          # warp=off（本机走原生）
+curl -4 -s --interface warp https://1.1.1.1/cdn-cgi/trace | grep warp   # warp=on（经隧道）
+```
+
+`up` 是**幂等且温和**的：接口已存在就复用、配置一致就连参数都不重下发，
+所以重复执行不会换 IP。要强制重建用 `up --force`。
 
 ## 构建与测试（在 Debian 上）
 
@@ -79,6 +98,14 @@ tests/e2e/m1-register.sh               # M1 真机验收（注册 + 隧道，39 
 - **解析对服务端字段形态不敏感**。`created`/`updated` 有时是字符串、有时是 `{}`；
   用 `time.Time` 会让一个无关字段把整次注册搞崩，所以用宽容类型。
 - **`account --json` 输出脱敏视图**（不含私钥与令牌），让「打印」这件事默认是安全的。
+- **规则与路由「先清后加」，删除只按 pref / 表号**。上游用 `ip rule add || true`
+  吞掉 EEXIST，于是每跑一次多一条，实测累积到过 4681 条；删除又按 `ip rule show` 的
+  文本匹配，接口一删就再也匹配不上。这里全程只用数字标识符。
+- **策略路由的规则自己实现**（不依赖第三方库的 `RuleAdd`）。实测在较新的内核上
+  那个调用会返回 EINVAL，而同样的消息手工构造就成功 —— 规则是幂等与零残留的唯一依据，
+  不把它押在别人的内核适配上。接口/地址/路由仍用成熟库。
+- **单个静态二进制，零运行时依赖**（不要求系统装 `wg`/`wg-quick`/`ip`/`jq`/`python`）。
+  M2 起引入了几个 Go 库（netlink / wgctrl），它们编译进二进制，不改变这一点。
 
 ## 许可
 

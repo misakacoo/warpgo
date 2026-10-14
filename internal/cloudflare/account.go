@@ -47,9 +47,28 @@ type Account struct {
 	AddrV4 string `json:"addr_v4,omitempty"`
 	AddrV6 string `json:"addr_v6,omitempty"`
 
-	PeerPublicKey string    `json:"peer_public_key"`
-	Endpoint      string    `json:"endpoint"`
-	RegisteredAt  time.Time `json:"registered_at"`
+	PeerPublicKey string `json:"peer_public_key"`
+	// Endpoint 是服务端给的 host:port（可读性好，日志里用它）。
+	Endpoint string `json:"endpoint"`
+	// EndpointV4 / EndpointV6 是同一对端的**字面量**形式，建隧道时优先用它们 ——
+	// API 返回的 v4/v6 端口是 0，这里已补成 2408；用字面量就完全不经过 DNS。
+	EndpointV4 string `json:"endpoint_v4,omitempty"`
+	EndpointV6 string `json:"endpoint_v6,omitempty"`
+
+	RegisteredAt time.Time `json:"registered_at"`
+}
+
+// PreferredEndpoint 返回建隧道时该用的端点。
+//
+// 顺序：IPv4 字面量 → IPv6 字面量 → host。前两者不查 DNS，是绝大多数情况；
+// host 只在服务端没给字面量时才用（那时才不得不解析域名）。
+func (a *Account) PreferredEndpoint() string {
+	for _, ep := range []string{a.EndpointV4, a.EndpointV6, a.Endpoint} {
+		if strings.TrimSpace(ep) != "" {
+			return ep
+		}
+	}
+	return ""
 }
 
 // FromDevice 把注册/查询接口的响应与本地密钥合成本机账户。
@@ -94,7 +113,9 @@ func FromDevice(dev *Device, privateKey, publicKey string) (*Account, error) {
 		AddrV4:        AddressV4Prefix(dev.Config.Interface.Addresses.V4),
 		AddrV6:        AddressV6Prefix(dev.Config.Interface.Addresses.V6),
 		PeerPublicKey: peer.PublicKey,
-		Endpoint:      endpoint,
+		Endpoint:      peer.Endpoint.HostPort(),
+		EndpointV4:    peer.Endpoint.HostPortV4(),
+		EndpointV6:    peer.Endpoint.HostPortV6(),
 		RegisteredAt:  time.Now().UTC(),
 	}, nil
 }
@@ -161,6 +182,12 @@ func (a *Account) ApplyDevice(dev *Device) {
 		if ep := peer.Endpoint.HostPort(); ep != "" {
 			a.Endpoint = ep
 		}
+		if ep := peer.Endpoint.HostPortV4(); ep != "" {
+			a.EndpointV4 = ep
+		}
+		if ep := peer.Endpoint.HostPortV6(); ep != "" {
+			a.EndpointV6 = ep
+		}
 	}
 }
 
@@ -209,6 +236,8 @@ type RedactedAccount struct {
 	AddrV6        string    `json:"addr_v6,omitempty"`
 	PeerPublicKey string    `json:"peer_public_key"`
 	Endpoint      string    `json:"endpoint"`
+	EndpointV4    string    `json:"endpoint_v4,omitempty"`
+	EndpointV6    string    `json:"endpoint_v6,omitempty"`
 	RegisteredAt  time.Time `json:"registered_at"`
 	HasToken      bool      `json:"has_token"`
 	HasPrivateKey bool      `json:"has_private_key"`
@@ -228,6 +257,8 @@ func (a *Account) Redacted() RedactedAccount {
 		AddrV6:        a.AddrV6,
 		PeerPublicKey: a.PeerPublicKey,
 		Endpoint:      a.Endpoint,
+		EndpointV4:    a.EndpointV4,
+		EndpointV6:    a.EndpointV6,
 		RegisteredAt:  a.RegisteredAt,
 		HasToken:      a.Token != "",
 		HasPrivateKey: a.PrivateKey != "",

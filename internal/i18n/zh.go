@@ -77,6 +77,38 @@ var zh = map[string]string{
 	KeyProfTableOffHint: "Table = off：本配置不接管任何路由。IPv4 仍可用，因为接口持有地址、内核允许按出接口直发；" +
 		"IPv6 必须有明确路由（M2 的非全局模式会负责这件事）。",
 
+	KeyUpStart:        "正在建立 WARP 隧道（模式 %s，接口 %s）",
+	KeyUpLinkCreated:  "已创建接口 %s（MTU %d）",
+	KeyUpLinkReused:   "接口 %s 已存在，直接复用（不重建、不换 IP）",
+	KeyUpAddrs:        "接口地址: %s",
+	KeyUpConfigured:   "已下发 WireGuard 配置",
+	KeyUpCfgMatched:   "WireGuard 配置已是最新，未重新下发（避免无谓的重握手）",
+	KeyUpNetcfg:       "已应用网络配置: %d 条路由、%d 条规则",
+	KeyUpCleaned:      "先清理了 %d 条旧规则",
+	KeyUpForce:        "--force：会先拆掉现有隧道再重建",
+	KeyUpDone:         "WARP 隧道已就绪（%s 模式）",
+	KeyUpNotDebian:    "建立隧道会改动系统网络，因此拒绝在 %s 上运行",
+
+	KeyDownStart:   "正在拆除 WARP 隧道",
+	KeyDownNothing: "没有需要拆除的东西（接口、残留规则与路由都不存在）",
+	KeyDownSummary: "已删除 %d 条规则、清空 %d 条路由",
+	KeyDownDone:    "隧道已拆除，现场已清空",
+
+	KeyStatusTitle:       "WARP 隧道状态",
+	KeyStatusNoRuntime:   "当前没有运行中的隧道（磁盘上没有运行态）",
+	KeyStatusIfaceGone:   "接口 %s 已不存在 —— 可能仍有残留规则/路由，请执行 `warpgo down`",
+	KeyStatusProbeOK:     "经隧道出口: %s（%s）warp=%s",
+	KeyStatusProbeFail:   "经隧道探测失败: %s",
+	KeyStatusHandshake:   "最近握手: %s",
+	KeyStatusNoHandshake: "尚未握手",
+
+	KeyNetRemovedRule: "已删除规则: %s",
+	KeyNetAddedRule:   "已添加规则: %s",
+	KeyNetAddedRoute:  "已添加路由: %s",
+	KeyNetFlushed:     "已从表 %d 清空 %d 条路由",
+	KeyNetDeletedLink: "已删除接口 %s",
+	KeyNetRefuseTable: "拒绝改动系统路由表 %d",
+
 	KeyPlatformDebian:   "系统检查: Debian %s",
 	KeyPlatformNotDebia: "本命令只支持 Debian（检测到: %s）",
 }

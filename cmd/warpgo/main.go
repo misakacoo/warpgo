@@ -71,6 +71,12 @@ func run(args []string) int {
 		return a.cmdAccount(cmdArgs)
 	case "profile":
 		return a.cmdProfile(cmdArgs)
+	case "up":
+		return a.cmdUp(cmdArgs)
+	case "down":
+		return a.cmdDown(cmdArgs)
+	case "status":
+		return a.cmdStatus(cmdArgs)
 	case "dev":
 		return a.cmdDev(cmdArgs)
 	default:

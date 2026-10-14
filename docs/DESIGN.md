@@ -120,8 +120,8 @@ warpgo/
 ├── internal/
 │   ├── cloudflare/  api.go types.go reserved.go account.go   # 不做 teams.go
 │   ├── wgconf/      keys.go profile.go                       # X25519 密钥、wg-quick 配置
-│   ├── tunnel/      tunnel.go kernel.go userspace.go uapi.go
-│   ├── netcfg/      link.go addr.go mtu.go dns.go route.go priority.go guard.go
+│   ├── tunnel/      tunnel.go kernel.go        # userspace.go / uapi.go 属 M5
+│   ├── netcfg/      netcfg.go link.go route.go rule.go(rulenl) plan.go apply.go
 │   ├── split/       iptables.go dnsmasq.go ipset.go
 │   ├── proxy/       wireproxy.go
 │   ├── cfclient/    install.go mode.go hooks.go
@@ -226,13 +226,22 @@ netlink 一次完成：建 `wireguard` 类型 link → 加地址（`172.16.0.2/3
 
 ### 8.4 出口接管
 
-**非全局（默认）**：
+**非全局（默认）** —— M2 的实现形态（pref 用固定号，便于按号精确清理）：
 
 ```
-ip rule add from 172.16.0.2 lookup 51820
-ip rule add from <内网网段>… lookup main      # 内网直连保留
-ip route add default dev warp table 51820
+# 两族都有：让 main 表里的「具体」路由优先于 WARP 的默认路由
+ip -4/-6 rule add pref 9000 lookup main suppress_prefixlength 0
+# v4：以 WARP 地址为源的流量交给 51820 表
+ip -4 rule add pref 9010 from 172.16.0.2 lookup 51820
+# v6：同样用源地址匹配（上游用的是 `oif`，这里统一成语义更明确的 from）
+ip -6 rule add pref 9011 from <warp-v6-addr> lookup 51820
+# 表里放默认路由（谁来用由上面的规则决定）
+ip -4/-6 route add default dev warp table 51820
 ```
+
+**`suppress_prefixlength 0` 是必需的一条**，它解决一个很具体的问题：如果只写「源地址是 WARP 地址 → 查 51820 表」，那么以 WARP 地址为源的流量去访问**内网**时，51820 表里只有一条默认路由，包会被塞进隧道，内网直连就断了。有了优先的 suppress 规则，流量先查 main 表里的具体路由（内网、直连网段），只有 main 给不出结果时才轮到 WARP 的默认路由。
+
+副作用为零：对普通流量只是多一次查表、结果相同；SSH 响应包的源地址是公网 IP，既不被 `from` 规则匹配，也能在最后回落到系统默认的 main 规则。
 
 **全局**：
 
@@ -398,7 +407,7 @@ RestartSec=30s
 |---|---|---|
 | **M0** | 骨架 + 状态/锁/i18n/日志 + 把调试残留移走 | `warpgo version` 能跑；`--lang` 生效；单实例锁三种行为（占用提示 / 心跳 / 接管）单测过 |
 | **M1** | `cloudflare` + `wgconf`：注册、reserved、profile | ✅ **完成**（2026-10-14）：真机验收 **39/39**，见下方 |
-| **M2** | `tunnel`(内核) + `netcfg` 非全局 + `up/down/status` + 菜单骨架 | 经接口得 `warp=on`、**SSH 不断**、默认路由仍原生；`up` 连跑 3 次规则数不变；`down` 零残留 |
+| **M2** | `tunnel`(内核) + `netcfg` 非全局 + `up/down/status` | ✅ **完成**（2026-10-14）：真机 **38/38** —— 见下方（菜单骨架未做，挪到功能齐了之后单独做） |
 | **M3** | 全局模式 + fwmark + watchdog 回滚 | 全局下 SSH 不断；人为把端点改黑洞 → 45 秒内自动回滚且网络恢复 |
 | **M4** | `health` + `keepalive` + systemd + **卸载** | ① 健康时连跑 5 次**接口创建时间不变**；② `ip link del warp` 后一轮内自愈；③ 伪造旧格式锁能接管；④ `uninstall` 后系统回到 M0 前的干净状态（含 DNS 还原） |
 | **M5** | 用户态后端 + reserved + `rotate` + 账户/license | 需要 reserved 的区域握手成功；`rotate` 换 IP 后仍 `warp=on`；账户类型显示正确 |
@@ -406,6 +415,20 @@ RestartSec=30s
 | **M7** | `w` / `y` WireProxy | socks5 可用；开关后进程 / 单元 / 配置干净 |
 | **M8** | `c` / `l` / `r` 官方 Client + `z` / `x` 钩子 | 三种模式切换正确；`z`/`x` 的 ip rule 加减成对；`r` 开关后 `warp-cli status` 符合预期 |
 | **M9** | `b` BBR + 版本/自更新 + 打包 | BBR 开关与还原正确；静态二进制 + `.deb` 可装可卸；`--check` 能查到新版本 |
+
+**M2 交付**（2026-10-14，真机 Debian 12）：
+
+- `internal/tunnel`：`Tunnel` 抽象 + 内核后端。**接口复用而非重建** ——
+  `up` 先比对当前 WireGuard 配置，一致就一行都不改（连重下发都省了），
+  于是 `up` 连跑多次也不会换 IP、不会触发无谓的重握手。
+- `internal/netcfg`：把「期望状态」做成纯数据的 `Plan`（可脱离 root 单测），
+  实际下发走 netlink；规则与路由一律**先清后加**，删除**只按 pref / 表号**。
+- CLI：`up [--mode] [--ifname] [--mtu] [--endpoint] [--force]` / `down` / `status [--json]`；
+  运行态写 `/etc/warpgo/runtime.json`，`down` 靠它知道该拆哪个接口，但不依赖它能否读 ——
+  即使运行态损坏也能把现场清干净。
+- 真机 38/38 通过（详见 §12）：双栈经隧道 `warp=on`、不绑定接口时 `warp=off`、
+  `up` 连跑 3 次接口创建时间与规则数都不变、`down` 后连系统规则都原封不动。
+- 单测累计 **85 条**全通过；`gofmt` / `go vet` 干净。
 
 **M1 交付**（2026-10-14，真机 Debian 12）：
 
@@ -435,6 +458,27 @@ profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则�
 - **假 netlink**：断言 ① `up` 三次后规则各 1 条 ② `down` 后完全空
   ③ 模拟"接口已删 + `[detached]` 显示形态"时仍按句柄清干净。
 - **假 UAPI socket**：断言握手序列、`reserved` 确实下发到用户态后端。
+
+### M2 真机实测（2026-10-14）
+
+真机 **38/38** 通过。几条值得记下来的结论：
+
+- **第三方 netlink 库的 `RuleAdd` 在本机内核（6.18.55-x86-64-xanmod）上一律返回 EINVAL** ——
+  连 `{Family: V4, Priority: 9010}` 这种最简输入都失败。而 ① `ip rule add`、
+  ② 手工构造的 netlink 消息 都能成功；同一个库的 `RuleList`（读）也是好的。
+  规则是"幂等与零残留"的唯一依据，所以这部分自己实现（`internal/netcfg/rulenl.go`，
+  约 200 行），接口 / 地址 / 路由继续用成熟库。
+- **绝不要写值为 0 的 `FRA_TABLE` 属性**。内核把 table=0 解释成"未指定"，
+  会让规则落到一个与预期无关的表上（实测变成 table 3）。上面那个库的判断是
+  `rule.Table >= 0`（int 零值恒真），所以它**总会**写这个属性。
+  另外库对 `SuppressPrefixlen` 的判断是 `>= 0`：零值恰好是我们想要的"设成 0"，
+  而"不设置"必须显式传 -1 —— 这两个语义是反的，容易写错。
+- 判据纪律再次生效：**"接口是否被重建"用 `/sys/class/net/warp` 的 mtime**。
+  `up` 连跑 3 次后该值不变，证明复用的是同一个接口（也就是同一个出口 IP）。
+- 非全局的语义用两条 `curl` 对照验证：绑定接口 → `warp=on`；**不绑定 → `warp=off`**。
+  后者才是"非全局"的定义，也解释了为什么它不会切断 SSH。
+- `down` 之后系统自带的 `local` / `main` / `default` 三条规则原封不动 ——
+  清理全程按 pref 精确删除，没有做任何"按范围扫一遍"的动作。
 
 ### M1 真机实测（2026-10-14）
 
