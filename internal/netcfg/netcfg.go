@@ -14,6 +14,7 @@
 package netcfg
 
 import (
+	"fmt"
 	"net/netip"
 	"strconv"
 )
@@ -35,6 +36,23 @@ const (
 	// 有了这条优先规则，流量先查 main 表里那些**具体**路由（内网、直连网段），
 	// 只有 main 表给不出结果时才轮到 WARP 的默认路由。
 	PrefSuppressMain = 9000
+
+	// PrefGlobalTunnel 是全局模式下把「其余流量」交给 WARP 的规则。
+	//
+	// 必须排在 PrefSuppressMain 之后：先让 main 表里的具体路由（内网、直连）
+	// 有机会命中，命不中的才落到 WARP。
+	PrefGlobalTunnel = 9020
+
+	// FWMarkWarp 是内核给「WireGuard 自己发出的封装包」打的标记。
+	//
+	// 它是全局模式的**防环路关键**：如果隧道自己的封装包也走「默认 → WARP」，
+	// 就会自己套自己、永远出不去（表现为握手永远不成功、整机断网）。
+	// 规则写成 `not fwmark 0xca6c lookup 51820`，把封装包排除在外，
+	// 它就会回落到系统默认规则、走原生路径出去。
+	//
+	// 取值 0xca6c = 51820（我们的表号），沿用的是 wg-quick 的约定，
+	// 好处是排查时两个数字能对上。
+	FWMarkWarp = 0xca6c
 
 	// PrefFromV4 / PrefFromV6 把「以 WARP 接口地址为源」的流量交给 51820 表。
 	//
@@ -70,6 +88,11 @@ type Rule struct {
 	From netip.Addr
 	// SuppressPrefixLen：-1 表示不设置该属性；0 表示"忽略默认路由"。
 	SuppressPrefixLen int
+
+	// FWMark 非零时按防火墙标记匹配；Invert 为真表示 `not fwmark`
+	// （全局模式靠它把隧道自己的封装包排除出去，见 FWMarkWarp）。
+	FWMark int
+	Invert bool
 }
 
 // IsZeroFrom 报告这条规则是否匹配所有源地址。
@@ -78,9 +101,15 @@ func (r Rule) IsZeroFrom() bool { return !r.From.IsValid() }
 // String 输出成与 `ip rule` 相近的可读形式（只用于日志）。
 func (r Rule) String() string {
 	s := "pref " + strconv.Itoa(r.Pref) + ": "
-	if r.From.IsValid() {
+	switch {
+	case r.FWMark != 0:
+		if r.Invert {
+			s += "not "
+		}
+		s += fmt.Sprintf("fwmark 0x%x ", r.FWMark)
+	case r.From.IsValid():
 		s += "from " + r.From.String() + " "
-	} else {
+	default:
 		s += "from all "
 	}
 	if r.Table > 0 {
@@ -107,7 +136,9 @@ func (r Rule) Equal(o Rule) bool {
 		r.Pref == o.Pref &&
 		r.Table == o.Table &&
 		r.From == o.From &&
-		r.SuppressPrefixLen == o.SuppressPrefixLen
+		r.SuppressPrefixLen == o.SuppressPrefixLen &&
+		r.FWMark == o.FWMark &&
+		r.Invert == o.Invert
 }
 
 // Route 是一条路由表项（纯数据）。

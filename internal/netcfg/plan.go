@@ -44,6 +44,8 @@ type Plan struct {
 	Families []int
 	Routes   []Route
 	Rules    []Rule
+	// FWMark 非零时要求隧道自己打上该标记（全局模式的防环路依赖它）。
+	FWMark int
 }
 
 // Options 是 Build 的可调项；零值走默认。
@@ -56,8 +58,9 @@ type Options struct {
 
 // Build 由接口地址生成期望状态。
 //
-// rules 只在非全局模式下生成；全局模式的规则形态完全不同（fwmark + suppress），
-// 属于 M3，这里直接拒绝而不是给一份"看起来能用"的东西。
+// 两种模式的差别**全在规则上**：接口配置、地址、表里的默认路由都一样，
+// 变的是"谁有资格用这张表"。这也是分层带来的好处 —— 换模式不用重建接口
+// （重建会换出口 IP）。
 func Build(addrs []netip.Prefix, opt Options) (*Plan, error) {
 	if opt.IfName == "" {
 		opt.IfName = DefaultIfName
@@ -72,11 +75,15 @@ func Build(addrs []netip.Prefix, opt Options) (*Plan, error) {
 	if mode == "" {
 		mode = ModeNonGlobal
 	}
-	if mode != ModeNonGlobal {
-		return nil, fmt.Errorf("模式 %s 尚未实现（计划在 M3）", mode)
+	if mode != ModeNonGlobal && mode != ModeGlobal {
+		return nil, fmt.Errorf("不认识的模式 %q", mode)
 	}
 
 	p := &Plan{IfName: opt.IfName, Table: opt.Table, MTU: opt.MTU, Mode: mode}
+	if mode == ModeGlobal {
+		// 全局模式必须让隧道自己打 fwmark，否则封装包会被自己的规则再次送进隧道。
+		p.FWMark = FWMarkWarp
+	}
 
 	// 每个地址族只处理一次：同一族给了多个地址时，规则只需要一条
 	// （规则匹配的是"源地址等于某个 WARP 地址"，而接口通常每族只有一个地址）。
@@ -104,6 +111,16 @@ func Build(addrs []netip.Prefix, opt Options) (*Plan, error) {
 			Family: fam, Pref: PrefSuppressMain, Table: TableMain, SuppressPrefixLen: 0,
 		})
 
+		if mode == ModeGlobal {
+			// 其余流量全部交给 WARP —— 但把隧道自己的封装包排除掉（not fwmark）。
+			// 少了这个 exclude，WireGuard 的封装包会被这条规则再次送进隧道，
+			// 结果是握手永远不成功、整机断网。
+			p.Rules = append(p.Rules, Rule{
+				Family: fam, Pref: PrefGlobalTunnel, Table: opt.Table,
+				FWMark: FWMarkWarp, Invert: true, SuppressPrefixLen: -1,
+			})
+			continue
+		}
 		pref := PrefFromV4
 		if fam == FamilyV6 {
 			pref = PrefFromV6

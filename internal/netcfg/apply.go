@@ -19,11 +19,15 @@ type managedRule struct {
 // 这个清单是"零残留"的唯一依据：只要这几条都在清理范围内，
 // 就不会出现上游那种"规则一直在加、却一条都删不掉"的局面。
 func ManagedRules() []managedRule {
+	// 两种模式都列上：清理时并不知道当前是哪种模式（甚至可能刚从全局切过来），
+	// 全都列上才能保证"不管之前处于什么状态都清得干净"。
 	return []managedRule{
 		{FamilyV4, PrefSuppressMain, TableMain},
 		{FamilyV6, PrefSuppressMain, TableMain},
 		{FamilyV4, PrefFromV4, TableWarp},
 		{FamilyV6, PrefFromV6, TableWarp},
+		{FamilyV4, PrefGlobalTunnel, TableWarp},
+		{FamilyV6, PrefGlobalTunnel, TableWarp},
 	}
 }
 

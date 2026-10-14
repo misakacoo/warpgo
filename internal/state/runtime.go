@@ -24,7 +24,7 @@ type Runtime struct {
 	Backend string `json:"backend"`
 	MTU     int    `json:"mtu"`
 	Table   int    `json:"table"`
-	FWMark  uint32 `json:"fwmark,omitempty"`
+	FWMark  int    `json:"fwmark,omitempty"`
 
 	Families []int    `json:"families"`
 	Addrs    []string `json:"addrs"`

@@ -336,3 +336,90 @@ func TestFindRule(t *testing.T) {
 		t.Errorf("没找到 V6/9000: %v %v", r, ok)
 	}
 }
+
+// --- 全局模式的规则编码 ---
+
+// kernelRuleMsgWithFlags 与 kernelRuleMsg 相同，但可以指定 header 的 flags。
+func kernelRuleMsgWithFlags(family uint8, srcLen, hdrTable uint8, flags uint32, attrs ...[]byte) []byte {
+	h := make([]byte, fibRuleHdrLen)
+	h[0] = family
+	h[2] = srcLen
+	h[4] = hdrTable
+	h[7] = actToTable
+	binary.NativeEndian.PutUint32(h[8:], flags)
+	for _, a := range attrs {
+		h = append(h, a...)
+	}
+	return h
+}
+
+// `not fwmark 0xca6c lookup 51820` 要靠**两个**地方同时正确：
+// header 的 FIB_RULE_INVERT 标志位，以及 FRA_FWMARK 属性。少一个都会变成
+// "所有流量都走 WARP（包括隧道自己的封装包）" —— 整机断网。
+func TestEncodeRuleAddFwMarkInvert(t *testing.T) {
+	r := Rule{
+		Family: FamilyV4, Pref: PrefGlobalTunnel, Table: TableWarp,
+		FWMark: FWMarkWarp, Invert: true, SuppressPrefixLen: -1,
+	}
+	buf, err := EncodeRuleAdd(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags := binary.NativeEndian.Uint32(buf[8:12]); flags&fibRuleInvert == 0 {
+		t.Errorf("`not` 必须写进 header 的 flags（FIB_RULE_INVERT），实得 0x%x", flags)
+	}
+	attrs := scanAttrs(t, buf[fibRuleHdrLen:])
+	a, ok := attrByType(attrs, fraFwMark)
+	if !ok {
+		t.Fatal("缺少 fwmark 属性 —— 规则会退化成「所有流量都走 WARP」")
+	}
+	if v := attrU32Value(t, a); v != uint32(FWMarkWarp) {
+		t.Errorf("fwmark 应为 0x%x，实得 0x%x", FWMarkWarp, v)
+	}
+	if _, ok := attrByType(attrs, fraSrc); ok {
+		t.Error("fwmark 规则不该带源地址")
+	}
+}
+
+func TestEncodeRuleAddRejectsMixedMatch(t *testing.T) {
+	cases := []struct {
+		name string
+		r    Rule
+	}{
+		{"fwmark 与 from 同时出现", Rule{
+			Family: FamilyV4, Pref: 100, Table: TableWarp,
+			FWMark: 1, From: netip.MustParseAddr("172.16.0.2"), SuppressPrefixLen: -1,
+		}},
+		{"只有 not 而没有 fwmark", Rule{
+			Family: FamilyV4, Pref: 100, Table: TableWarp, Invert: true, SuppressPrefixLen: -1,
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := EncodeRuleAdd(c.r); err == nil {
+				t.Fatal("应当报错")
+			}
+		})
+	}
+}
+
+func TestParseRuleMsgFwMark(t *testing.T) {
+	msg := kernelRuleMsgWithFlags(2, 0, 252, fibRuleInvert,
+		kernelAttrU32(fraPriority, uint32(PrefGlobalTunnel)),
+		kernelAttrU32(fraTable, uint32(TableWarp)),
+		kernelAttrU32(fraFwMark, uint32(FWMarkWarp)),
+	)
+	r, err := ParseRuleMsg(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Invert {
+		t.Error("没读出 `not` 标志")
+	}
+	if r.FWMark != FWMarkWarp {
+		t.Errorf("fwmark 应为 0x%x，实得 0x%x", FWMarkWarp, r.FWMark)
+	}
+	if r.Table != TableWarp {
+		t.Errorf("表号应为 %d，实得 %d", TableWarp, r.Table)
+	}
+}

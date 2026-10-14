@@ -125,13 +125,15 @@ func TestBuildRejectsEmptyAndBadInput(t *testing.T) {
 	}
 }
 
-func TestBuildRejectsUnimplementedMode(t *testing.T) {
-	// 全局模式必须明确拒绝，而不是给一份"看着能用、实际会切断 SSH"的配置。
-	if _, err := Build(pfxs("172.16.0.2/32"), Options{Mode: ModeGlobal}); err == nil {
-		t.Fatal("全局模式尚未实现，应当报错")
+func TestBuildRejectsUnknownMode(t *testing.T) {
+	if _, err := Build(pfxs("172.16.0.2/32"), Options{Mode: Mode("half")}); err == nil {
+		t.Fatal("不认识的模式应报错，而不是悄悄按某个默认值处理")
 	}
-	if _, err := Build(pfxs("172.16.0.2/32"), Options{Mode: ModeNonGlobal}); err != nil {
-		t.Fatalf("非全局模式应被接受: %v", err)
+	// 两种受支持的模式都必须被接受（M3 起全局模式不再是"未实现"）。
+	for _, m := range []Mode{ModeNonGlobal, ModeGlobal} {
+		if _, err := Build(pfxs("172.16.0.2/32"), Options{Mode: m}); err != nil {
+			t.Fatalf("模式 %s 应被接受: %v", m, err)
+		}
 	}
 }
 
@@ -175,30 +177,86 @@ func TestParseMode(t *testing.T) {
 	}
 }
 
-// ManagedRules 是"零残留"的依据，它必须覆盖 Build 会产出的全部规则位置。
+// ManagedRules 是"零残留"的依据：它必须覆盖**两种模式**会产出的所有规则位置。
+//
+// 不能反过来要求"每个受管 pref 都必须出现在同一次 Build 里" —— down 的时候
+// 我们并不知道之前是哪种模式（甚至可能刚从全局切回非全局），清理清单必须更宽。
 func TestManagedRulesCoversBuiltRules(t *testing.T) {
-	plan, err := Build(pfxs("172.16.0.2/32", "2606:4700:110::2/128"), Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	managed := map[[2]int]bool{}
 	for _, m := range ManagedRules() {
 		managed[[2]int{m.Family, m.Pref}] = true
 	}
-	for _, r := range plan.Rules {
-		if !managed[[2]int{r.Family, r.Pref}] {
-			t.Errorf("规则 %s 不在 ManagedRules 里 —— down 时清不掉它", r)
+	for _, mode := range []Mode{ModeNonGlobal, ModeGlobal} {
+		plan, err := Build(pfxs("172.16.0.2/32", "2606:4700:110::2/128"), Options{Mode: mode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range plan.Rules {
+			if !managed[[2]int{r.Family, r.Pref}] {
+				t.Errorf("[%s] 规则 %s 不在 ManagedRules 里 —— down 时清不掉它", mode, r)
+			}
+		}
+	}
+}
+
+// 全局模式：其余流量走 WARP，但必须把隧道自己的封装包排除掉（not fwmark）。
+//
+// 少了这个 exclude，WireGuard 的封装包会被自己的规则再次送进隧道 ——
+// 表现为握手永远不成功、整机断网。这是全局模式唯一"写错就完蛋"的地方。
+func TestBuildGlobal(t *testing.T) {
+	plan, err := Build(pfxs("172.16.0.2/32", "2606:4700:110::2/128"), Options{Mode: ModeGlobal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.FWMark != FWMarkWarp {
+		t.Errorf("全局模式必须要求隧道打 fwmark（实得 %d）", plan.FWMark)
+	}
+
+	want := []Rule{
+		{Family: FamilyV4, Pref: PrefSuppressMain, Table: TableMain, SuppressPrefixLen: 0},
+		{Family: FamilyV4, Pref: PrefGlobalTunnel, Table: TableWarp,
+			FWMark: FWMarkWarp, Invert: true, SuppressPrefixLen: -1},
+		{Family: FamilyV6, Pref: PrefSuppressMain, Table: TableMain, SuppressPrefixLen: 0},
+		{Family: FamilyV6, Pref: PrefGlobalTunnel, Table: TableWarp,
+			FWMark: FWMarkWarp, Invert: true, SuppressPrefixLen: -1},
+	}
+	if len(plan.Rules) != len(want) {
+		t.Fatalf("应有 %d 条规则，实得 %d: %v", len(want), len(plan.Rules), plan.RuleStrings())
+	}
+	for i := range want {
+		if !plan.Rules[i].Equal(want[i]) {
+			t.Errorf("规则 %d 不对\n 期望 %s\n 实得 %s", i, want[i], plan.Rules[i])
 		}
 	}
 
-	// 反向：ManagedRules 里每条都要有对应的构建产物（不该留无用的清理项）。
-	built := map[[2]int]bool{}
+	// 全局模式靠策略规则接管流量，**不该**出现按源地址匹配的规则。
 	for _, r := range plan.Rules {
-		built[[2]int{r.Family, r.Pref}] = true
+		if r.From.IsValid() {
+			t.Errorf("全局模式不该出现 from 规则: %s", r)
+		}
+		if r.FWMark != 0 && !r.Invert {
+			t.Errorf("交付给 WARP 的那条必须是 `not fwmark`，实得 %s", r)
+		}
 	}
-	for _, m := range ManagedRules() {
-		if !built[[2]int{m.Family, m.Pref}] {
-			t.Errorf("ManagedRules 里的 %v 没有对应的规则被创建（清理清单多余）", m)
+
+	// 接口地址与表里的默认路由与非全局完全一致 —— 换模式不需要重建接口。
+	if len(plan.Addrs) != 2 || len(plan.Routes) != 2 {
+		t.Errorf("地址/路由应与非全局一致，实得 %d 地址 %d 路由", len(plan.Addrs), len(plan.Routes))
+	}
+}
+
+// 反向：非全局模式不该出现 fwmark 规则（那是全局的特征）。
+func TestBuildNonGlobalHasNoFwMark(t *testing.T) {
+	plan, err := Build(pfxs("172.16.0.2/32"), Options{Mode: ModeNonGlobal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.FWMark != 0 {
+		t.Errorf("非全局模式不该要求 fwmark，实得 %d", plan.FWMark)
+	}
+	for _, r := range plan.Rules {
+		if r.FWMark != 0 {
+			t.Errorf("非全局模式不该出现 fwmark 规则: %s", r)
 		}
 	}
 }

@@ -88,3 +88,32 @@ func DefaultRouteCount(family, table int) (int, error) {
 	}
 	return n, nil
 }
+
+// DefaultRouteDev 返回系统主表里该族默认路由所用的出口设备名；没有则返回空串。
+//
+// 回滚之后要拿它做校验：默认路由绝不能再指向我们删掉的那个接口。
+func DefaultRouteDev(family int) (string, error) {
+	routes, err := ListTableRoutes(family, TableMain)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range routes {
+		if !isDefaultRoute(r) {
+			continue
+		}
+		link, lerr := netlink.LinkByIndex(r.LinkIndex)
+		if lerr != nil {
+			return "", nil
+		}
+		return link.Attrs().Name, nil
+	}
+	return "", nil
+}
+
+func isDefaultRoute(r netlink.Route) bool {
+	if r.Dst == nil {
+		return true
+	}
+	ones, bits := r.Dst.Mask.Size()
+	return bits > 0 && ones == 0
+}

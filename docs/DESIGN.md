@@ -119,6 +119,8 @@ warpgo/
 ├── cmd/warpgo/main.go
 ├── internal/
 │   ├── cloudflare/  api.go types.go reserved.go account.go   # 不做 teams.go
+│   ├── health/      probe.go                                 # 只读探测（M3 自检 / M4 保活共用）
+│   ├── rollback/    rollback.go                              # 快照 / 保险丝 / 回滚
 │   ├── wgconf/      keys.go profile.go                       # X25519 密钥、wg-quick 配置
 │   ├── tunnel/      tunnel.go kernel.go        # userspace.go / uapi.go 属 M5
 │   ├── netcfg/      netcfg.go link.go route.go rule.go(rulenl) plan.go apply.go
@@ -269,6 +271,27 @@ ip rule add table main suppress_prefixlength 0
 3. 自检（缺一不可）才允许 `confirm`：
    经接口拿到 `warp=on`；原生默认路由仍在；至少一个外部地址在原生路径上仍可建连。
 
+**M3 的落地形态**（§8.5 的三条做成这样）：
+
+```
+pref 9000: lookup main suppress_prefixlength 0     # 两族：内网/直连优先
+pref 9020: not fwmark 0xca6c lookup 51820          # 两族：其余流量交给 WARP
+接口侧：fwmark = 0xca6c（内核给隧道自己的封装包打这个标记）
+```
+
+四处值得单独说的：
+
+1. **顺序**：快照 → 派生保险丝 → 应用 → 自检 → 确认。派生必须在应用**之前** ——
+   否则断网那一刻保险丝还没出生，等于没有保险。
+2. **保险丝是独立进程**（`setsid`，日志 `/run/warpgo/guard.log`）。它不是「备用方案」，
+   而是唯一可靠的方案：全局模式一旦断网，发起变更的那个 SSH 会话多半已经收不到
+   任何东西了，同会话的进程也会被一并带走。
+3. **自检失败立即回滚**（不等超时），把断网窗口从 45 秒缩到十几秒；
+   保险丝是给「连自检都没跑完」的极端情况兜底的。两者都要，不是二选一。
+4. **回滚目标是「回到没有 warpgo 隧道」，不是「恢复到变更前一模一样」**。
+   后者听起来更贴心，但要保存并复原整套规则 —— 复原过程本身出错就把
+   唯一的救命通道也搭进去了。回到干净状态更稳：用户看到提示后一条命令就能重来。
+
 ### 8.6 体检与保活
 
 ```
@@ -408,13 +431,27 @@ RestartSec=30s
 | **M0** | 骨架 + 状态/锁/i18n/日志 + 把调试残留移走 | `warpgo version` 能跑；`--lang` 生效；单实例锁三种行为（占用提示 / 心跳 / 接管）单测过 |
 | **M1** | `cloudflare` + `wgconf`：注册、reserved、profile | ✅ **完成**（2026-10-14）：真机验收 **39/39**，见下方 |
 | **M2** | `tunnel`(内核) + `netcfg` 非全局 + `up/down/status` | ✅ **完成**（2026-10-14）：真机 **38/38** —— 见下方（菜单骨架未做，挪到功能齐了之后单独做） |
-| **M3** | 全局模式 + fwmark + watchdog 回滚 | 全局下 SSH 不断；人为把端点改黑洞 → 45 秒内自动回滚且网络恢复 |
+| **M3** | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ **完成**（2026-10-14）：真机 **31/31** —— 见下方 |
 | **M4** | `health` + `keepalive` + systemd + **卸载** | ① 健康时连跑 5 次**接口创建时间不变**；② `ip link del warp` 后一轮内自愈；③ 伪造旧格式锁能接管；④ `uninstall` 后系统回到 M0 前的干净状态（含 DNS 还原） |
 | **M5** | 用户态后端 + reserved + `rotate` + 账户/license | 需要 reserved 的区域握手成功；`rotate` 换 IP 后仍 `warp=on`；账户类型显示正确 |
 | **M6** | `s` 栈优先级 + `e` 分流 | 优先级切换后 `curl -4/-6` 出口符合预期；分流开启后命中走 warp、未命中走原生；关闭后 iptables/ipset/dnsmasq 零残留 |
 | **M7** | `w` / `y` WireProxy | socks5 可用；开关后进程 / 单元 / 配置干净 |
 | **M8** | `c` / `l` / `r` 官方 Client + `z` / `x` 钩子 | 三种模式切换正确；`z`/`x` 的 ip rule 加减成对；`r` 开关后 `warp-cli status` 符合预期 |
 | **M9** | `b` BBR + 版本/自更新 + 打包 | BBR 开关与还原正确；静态二进制 + `.deb` 可装可卸；`--check` 能查到新版本 |
+
+**M3 交付**（2026-10-14，真机 Debian 12）：
+
+- `internal/health`：只读探测（`SO_BINDTODEVICE` 绑接口 / 不绑），只用 IP 字面量、零 DNS。
+  M4 的保活会直接复用它。
+- `internal/netcfg`：`Rule` 支持 fwmark / not-fwmark；全局模式的规则为
+  pref 9000（内网/直连优先）+ pref 9020（`not fwmark 0xca6c` → WARP）。
+- `internal/rollback` + `rollback-guard` / `confirm`：快照 → 独立保险丝进程 →
+  超时无条件回滚。库层只发事件、不拼文案（文案属 CLI 层）。
+- `up --mode global`：快照 → 派生保险丝 → 应用 → 自检 → 确认；
+  自检失败**立即回滚**，另加 `--no-confirm` / `--guard-timeout`。
+- 真机 31/31 通过（详见 §12）：全局生效（不绑接口也 `warp=on`）、SSH 不断、
+  坏端点 16 秒内主动回滚、`--no-confirm` 下保险丝 25 秒超时自动回滚并恢复网络。
+- 单测累计 **90 条**全通过；`gofmt` / `go vet` 干净；M0/M1/M2 全部回归通过。
 
 **M2 交付**（2026-10-14，真机 Debian 12）：
 
@@ -458,6 +495,24 @@ profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则�
 - **假 netlink**：断言 ① `up` 三次后规则各 1 条 ② `down` 后完全空
   ③ 模拟"接口已删 + `[detached]` 显示形态"时仍按句柄清干净。
 - **假 UAPI socket**：断言握手序列、`reserved` 确实下发到用户态后端。
+
+### M3 真机实测（2026-10-14）
+
+真机 **31/31** 通过。这个脚本会**故意让机器失去网络若干秒** —— 那正是它要验证的场景。
+
+- 全局模式生效的判据是「**不绑定接口**也拿到 `warp=on`」：这与 M2 的非全局正好反向
+  （那边不绑接口必须 `warp=off`）。两条合起来才说明模式真的切换了。
+- `not fwmark 0xca6c` 要**两处同时正确**才有效：规则里的 flags 与 fwmark 属性、
+  以及接口侧的 `fwmark = 0xca6c`。少一处就会变成「所有流量（含隧道自己的封装包）
+  都走 WARP」，表现是握手永远不成功、整机断网。单测对这两处都有字节级断言。
+- 全局模式**不改默认路由**（靠策略规则接管），自检里专门有一条在验证这件事 ——
+  万一哪天实现走偏成「改默认路由」，它会在放行前就红。
+- 坏端点（TEST-NET-1）下的实测：自检 16 秒判定失败并**主动回滚**，
+  远早于 120 秒的保险丝超时；网络随之恢复。
+- `--no-confirm` 场景（模拟「主流程没能确认」）：保险丝在 25 秒后**自动回滚**，
+  网络恢复，`/run/warpgo/guard.log` 留下完整回滚记录。这一条才是保险丝存在的理由。
+- 脚本自己踩的坑记一笔：断言不能只 grep 中文（比如「自检」）——
+  被测程序的输出语言取决于运行环境的 locale，验收脚本不该假设它。
 
 ### M2 真机实测（2026-10-14）
 

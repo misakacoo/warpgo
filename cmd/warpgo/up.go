@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/misakacoo/warpgo/internal/cloudflare"
+	"github.com/misakacoo/warpgo/internal/health"
 	"github.com/misakacoo/warpgo/internal/i18n"
 	"github.com/misakacoo/warpgo/internal/netcfg"
+	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/system"
 	"github.com/misakacoo/warpgo/internal/tunnel"
@@ -41,20 +45,30 @@ type upOptions struct {
 	Force    bool
 }
 
+// selfCheckBudget 是自检的总预算。
+//
+// 它必须明显小于保险丝的超时（45s），否则会出现"自检还没跑完、保险丝先拉闸"
+// 的竞态 —— 那样的失败看起来像随机断网，非常难排查。
+const selfCheckBudget = 25 * time.Second
+
 func (a *app) cmdUp(args []string) int {
 	var (
-		modeStr  string
-		ifName   string
-		mtu      int
-		endpoint string
-		force    bool
+		modeStr         string
+		ifName          string
+		mtu             int
+		endpoint        string
+		force           bool
+		noConfirm       bool
+		guardTimeoutStr string
 	)
 	opts := newOptionSet().
 		Str("--mode", &modeStr).
 		Str("--ifname", &ifName).
 		Int("--mtu", &mtu).
 		Str("--endpoint", &endpoint).
-		Bool("--force", &force)
+		Bool("--force", &force).
+		Bool("--no-confirm", &noConfirm).
+		Str("--guard-timeout", &guardTimeoutStr)
 	if err := opts.parse(args, a.bundle.Tf); err != nil {
 		return a.fail(err)
 	}
@@ -63,10 +77,17 @@ func (a *app) cmdUp(args []string) int {
 	if err != nil {
 		return a.fail(err)
 	}
-	if mode != netcfg.ModeNonGlobal {
-		// 全局模式要 fwmark + watchdog 回滚（M3）。现在直接拒绝，
-		// 而不是给一份"看起来能跑、实际会切断 SSH"的配置。
-		return a.fail(fmt.Errorf("模式 %s 尚未实现（计划在 M3）", mode))
+
+	guardTimeout := rollback.DefaultTimeout
+	if guardTimeoutStr != "" {
+		d, perr := time.ParseDuration(guardTimeoutStr)
+		if perr != nil {
+			return a.fail(fmt.Errorf("--guard-timeout 不是合法时长: %w", perr))
+		}
+		if d <= 0 {
+			return a.fail(fmt.Errorf("--guard-timeout 必须为正数（实得 %s）", d))
+		}
+		guardTimeout = d
 	}
 
 	// 建隧道会改系统网络，非 Debian 直接拒绝。
@@ -94,6 +115,28 @@ func (a *app) cmdUp(args []string) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), upTimeout)
 	defer cancel()
+
+	// ★ 全局模式的前置：**先上保险，再动网络**。
+	//
+	// 顺序不能反。保险丝的整个意义就是"当变更把网络弄断时，还有人在数秒后拉闸"；
+	// 如果先改网络再派生保险丝，那么断网那一刻保险丝还没出生，等于没有保险。
+	var snap *rollback.Snapshot
+	if mode == netcfg.ModeGlobal {
+		if snap, err = newSnapshot(cfg.IfName, plan); err != nil {
+			return a.fail(err)
+		}
+		if err := rollback.ClearConfirm(); err != nil {
+			return a.fail(err)
+		}
+		if err := snap.Save(rollback.SnapshotPath()); err != nil {
+			return a.fail(err)
+		}
+		if err := a.spawnGuard(guardTimeout); err != nil {
+			return a.fail(err)
+		}
+		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyUpGuardSpawned, guardTimeout))
+		a.log.Warnf("%s", a.bundle.T(i18n.KeyUpGlobalStart))
+	}
 
 	if force {
 		a.log.Infof("%s", a.bundle.T(i18n.KeyUpForce))
@@ -129,8 +172,146 @@ func (a *app) cmdUp(args []string) int {
 	if err := rtState.Save(state.RuntimePath()); err != nil {
 		return a.fail(err)
 	}
+
+	if mode == netcfg.ModeGlobal {
+		return a.finishGlobal(ctx, snap, plan, guardTimeout, noConfirm)
+	}
+
 	a.log.Infof("%s", a.bundle.Tf(i18n.KeyUpDone, mode))
 	return exitOK
+}
+
+// finishGlobal 是全局模式的后置：自检通过才确认，否则立刻回滚。
+//
+// 为什么"自检失败要立刻回滚"而不是等保险丝超时：早点回滚能把断网窗口从
+// 45 秒缩到几秒。保险丝是给"连这段代码都没跑完"的极端情况兜底的。
+func (a *app) finishGlobal(ctx context.Context, snap *rollback.Snapshot, plan *netcfg.Plan, timeout time.Duration, noConfirm bool) int {
+	if noConfirm {
+		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyUpNoConfirm, timeout))
+		return exitOK
+	}
+
+	a.log.Infof("%s", a.bundle.T(i18n.KeyUpChecking))
+	// 自检有独立的预算，且必须明显小于保险丝超时（见 selfCheckBudget 的说明）。
+	checkCtx, cancel := context.WithTimeout(ctx, selfCheckBudget)
+	defer cancel()
+	detail, err := a.selfCheck(checkCtx, plan)
+	if err != nil {
+		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyUpCheckFail, err))
+		a.log.Warnf("%s", a.bundle.T(i18n.KeyUpRollingBack))
+		if rerr := rollback.Rollback(snap, a.guardLog); rerr != nil {
+			return a.fail(rerr)
+		}
+		_ = rollback.ClearSnapshot()
+		return exitUnhealthy
+	}
+	a.log.Infof("%s", a.bundle.Tf(i18n.KeyUpCheckOK, detail))
+	if err := rollback.Confirm(); err != nil {
+		return a.fail(err)
+	}
+	_ = rollback.ClearSnapshot()
+	a.log.Infof("%s", a.bundle.T(i18n.KeyUpGlobalDone))
+	return exitOK
+}
+
+// selfCheck 是放行全局模式前的最后一道检查，三条缺一不可。
+//
+// 全部只读：即使判定"不行"，我们也只是把自己加的东西撤掉，
+// 不会让"正在恢复"的状态变得更糟。
+func (a *app) selfCheck(ctx context.Context, plan *netcfg.Plan) (string, error) {
+	// ① 经隧道至少一族能拿到 warp=on —— 隧道真的通了。
+	viaTunnel, err := health.ProbeAny(ctx, plan.Families, health.Options{
+		Interface: plan.IfName,
+		Timeout:   8 * time.Second,
+	})
+	if err != nil {
+		return "", fmt.Errorf("经隧道没有拿到 warp=on: %w", err)
+	}
+
+	// ② 系统默认路径仍能出网。全局模式下这条本身也走 WARP，
+	//    但它走的是"策略规则"而不是"绑定接口"，正好验证规则配对没配错。
+	viaDefault, err := health.ProbeAny(ctx, plan.Families, health.Options{
+		Timeout: 6 * time.Second,
+	})
+	if err != nil {
+		return "", fmt.Errorf("系统默认路径已不可用（很可能整机断网）: %w", err)
+	}
+
+	// ③ 默认路由表项还在，且没有指向我们 —— 全局模式靠策略规则，
+	//    绝不该去改默认路由。这一条是在验证我们没做出格的事。
+	dev, err := netcfg.DefaultRouteDev(netcfg.FamilyV4)
+	if err != nil {
+		return "", fmt.Errorf("读取默认路由: %w", err)
+	}
+	if dev == "" {
+		return "", errors.New("找不到系统默认路由")
+	}
+	if dev == plan.IfName {
+		return "", fmt.Errorf("默认路由被指向了 %s（全局模式不该这么做）", plan.IfName)
+	}
+
+	return fmt.Sprintf("经隧道 %s；默认路径 %s；默认路由 dev=%s", viaTunnel, viaDefault, dev), nil
+}
+
+// newSnapshot 记录这次变更动了什么，供回滚使用。
+func newSnapshot(ifName string, plan *netcfg.Plan) (*rollback.Snapshot, error) {
+	if plan == nil {
+		return nil, errors.New("plan 为空，无法生成回滚快照")
+	}
+	seen := map[int]bool{}
+	var prefs []int
+	for _, r := range plan.Rules {
+		if !seen[r.Pref] {
+			seen[r.Pref] = true
+			prefs = append(prefs, r.Pref)
+		}
+	}
+	return &rollback.Snapshot{
+		CreatedAt:    time.Now().UTC(),
+		IfName:       ifName,
+		Table:        plan.Table,
+		Mode:         string(plan.Mode),
+		ManagedPrefs: prefs,
+		ResolvSHA256: rollback.ResolvFingerprint(),
+		PID:          os.Getpid(),
+		Reason:       "up --mode " + string(plan.Mode),
+	}, nil
+}
+
+// spawnGuard 派生保险丝进程。
+//
+// 三个要点：
+//   - setsid：让它脱离当前会话。发起变更的 SSH 会话一旦消失，
+//     同会话的进程会被一并带走，那样保险丝就形同虚设。
+//   - 不 Wait：它必须活得比我们久。
+//   - 日志进文件：那一刻已经没有任何终端可以给它了。
+func (a *app) spawnGuard(timeout time.Duration) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("定位自身可执行文件: %w", err)
+	}
+	if err := os.MkdirAll(rollback.RunDir(), 0o700); err != nil {
+		return fmt.Errorf("创建 %s: %w", rollback.RunDir(), err)
+	}
+	logFile, err := os.OpenFile(rollback.GuardLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("打开保险丝日志: %w", err)
+	}
+	defer logFile.Close()
+
+	cmd := exec.Command(exe,
+		"--lang", string(a.bundle.Lang()),
+		"rollback-guard",
+		"--timeout", timeout.String(),
+		"--snapshot", rollback.SnapshotPath())
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("派生保险丝进程: %w", err)
+	}
+	_ = cmd.Process.Release()
+	return nil
 }
 
 // buildTunnel 把账户翻译成「隧道参数 + 期望网络状态 + 运行态」。
@@ -191,6 +372,8 @@ func buildTunnel(acct *cloudflare.Account, opt upOptions) (tunnel.Config, *netcf
 	if err != nil {
 		return zeroCfg, nil, nil, err
 	}
+	// 全局模式要求隧道自己打 fwmark，否则封装包会被自己的规则送进隧道（死循环）。
+	cfg.FWMark = plan.FWMark
 
 	rtState := &state.Runtime{
 		IfName:   ifName,
@@ -198,6 +381,7 @@ func buildTunnel(acct *cloudflare.Account, opt upOptions) (tunnel.Config, *netcf
 		Backend:  string(tunnel.BackendKernel),
 		MTU:      mtu,
 		Table:    netcfg.TableWarp,
+		FWMark:   plan.FWMark,
 		Families: plan.Families,
 		Addrs:    plan.AddrStrings(),
 		Endpoint: endpoint,

@@ -5,6 +5,7 @@ import (
 
 	"github.com/misakacoo/warpgo/internal/i18n"
 	"github.com/misakacoo/warpgo/internal/netcfg"
+	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/tunnel"
 )
@@ -61,6 +62,10 @@ func (a *app) cmdDown(args []string) int {
 
 	if err := state.RemoveRuntime(state.RuntimePath()); err != nil {
 		return a.fail(err)
+	}
+	// 拆掉之后就没有"待回滚的变更"了 —— 让 confirm 能如实回答"当前没有待确认的改动"。
+	if err := rollback.ClearSnapshot(); err != nil {
+		a.log.Warnf("%v", err)
 	}
 
 	if len(res.RulesRemoved) == 0 && res.RoutesFlushed == 0 && !deleted {

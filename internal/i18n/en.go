@@ -109,6 +109,27 @@ Kernel WireGuard ignores the "# Reserved" line; see docs/DESIGN.md §8.2.`,
 	KeyNetDeletedLink: "deleted interface %s",
 	KeyNetRefuseTable: "refusing to touch system routing table %d",
 
+	KeyGuardArmed:     "fuse armed: waiting for confirmation, at most %s (snapshot %s)",
+	KeyGuardConfirmed: "confirmation received -- the change is kept (no rollback)",
+	KeyGuardTimeout:   "still no confirmation after %s -- treating the change as failed, rolling back unconditionally",
+	KeyGuardRBRules:   "rollback 1/3: removing the policy routing rules warpgo added",
+	KeyGuardRBTable:   "rollback 2/3: flushing routing table %d",
+	KeyGuardRBLink:    "rollback 3/3: deleting interface %s",
+	KeyGuardRBDone:    "rollback complete: the network is back to the pre-WARP state",
+	KeyGuardNote:      "(detail) %s",
+
+	KeyConfirmOK: "confirmed: the new configuration is kept and the fuse is disarmed",
+	KeyConfirmNone: "there is no pending change to confirm (nothing was left unconfirmed)",
+
+	KeyUpGlobalStart:  "enabling global mode (ALL traffic will go through WARP)",
+	KeyUpGuardSpawned: "spawned the rollback fuse: without confirmation it will roll back in %s",
+	KeyUpChecking:     "running self-check: tunnel and default path must both work",
+	KeyUpCheckOK:      "self-check passed: %s",
+	KeyUpCheckFail:    "self-check failed: %v",
+	KeyUpRollingBack:  "rolling back to the pre-change state",
+	KeyUpNoConfirm:    "--no-confirm: config applied but NOT confirmed; run `warpgo confirm` within %s or it rolls back automatically",
+	KeyUpGlobalDone:   "global mode is active (all traffic goes through WARP)",
+
 	KeyPlatformDebian:   "system check: Debian %s",
 	KeyPlatformNotDebia: "this command only supports Debian (detected: %s)",
 }

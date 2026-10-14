@@ -66,6 +66,30 @@ const (
 	KeyDownSummary = "down.summary"
 	KeyDownDone    = "down.done"
 
+	// 回滚保险丝（M3）
+	KeyGuardArmed     = "guard.armed"
+	KeyGuardConfirmed = "guard.confirmed"
+	KeyGuardTimeout   = "guard.timeout"
+	KeyGuardRBRules   = "guard.rollback_rules"
+	KeyGuardRBTable   = "guard.rollback_table"
+	KeyGuardRBLink    = "guard.rollback_link"
+	KeyGuardRBDone    = "guard.rollback_done"
+	KeyGuardNote      = "guard.note"
+
+	// 确认（M3）
+	KeyConfirmOK   = "confirm.ok"
+	KeyConfirmNone = "confirm.nothing_pending"
+
+	// 全局模式（M3）
+	KeyUpGlobalStart  = "up.global_start"
+	KeyUpGuardSpawned = "up.guard_spawned"
+	KeyUpChecking     = "up.self_check"
+	KeyUpCheckOK      = "up.self_check_passed"
+	KeyUpCheckFail    = "up.self_check_failed"
+	KeyUpRollingBack  = "up.rolling_back"
+	KeyUpNoConfirm    = "up.no_confirm"
+	KeyUpGlobalDone   = "up.global_done"
+
 	// 状态（M2）
 	KeyStatusTitle       = "status.title"
 	KeyStatusNoRuntime   = "status.no_runtime"

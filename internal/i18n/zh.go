@@ -109,6 +109,27 @@ var zh = map[string]string{
 	KeyNetDeletedLink: "已删除接口 %s",
 	KeyNetRefuseTable: "拒绝改动系统路由表 %d",
 
+	KeyGuardArmed:     "保险丝已就位：等待确认，最多 %s（快照 %s）",
+	KeyGuardConfirmed: "收到确认，本次变更保留（未回滚）",
+	KeyGuardTimeout:   "超时 %s 仍未收到确认 —— 判定变更失败，开始无条件回滚",
+	KeyGuardRBRules:   "回滚 1/3：删除 warpgo 添加的策略路由规则",
+	KeyGuardRBTable:   "回滚 2/3：清空路由表 %d",
+	KeyGuardRBLink:    "回滚 3/3：删除接口 %s",
+	KeyGuardRBDone:    "回滚完成：网络已回到没有 WARP 隧道的状态",
+	KeyGuardNote:      "（细节）%s",
+
+	KeyConfirmOK: "已确认配置可用，保险丝解除",
+	KeyConfirmNone: "当前没有待确认的变更（没有未确认的改动）",
+
+	KeyUpGlobalStart:  "正在启用全局模式（所有流量将走 WARP）",
+	KeyUpGuardSpawned: "已派生回滚保险丝：%s 内未确认将自动回滚",
+	KeyUpChecking:     "自检中：隧道与默认路径都必须可用",
+	KeyUpCheckOK:      "自检通过：%s",
+	KeyUpCheckFail:    "自检未通过：%v",
+	KeyUpRollingBack:  "正在回滚到变更前的状态",
+	KeyUpNoConfirm:    "--no-confirm：配置已应用但未确认；%s 内不执行 `warpgo confirm` 就会自动回滚",
+	KeyUpGlobalDone:   "全局模式已生效（所有流量经 WARP）",
+
 	KeyPlatformDebian:   "系统检查: Debian %s",
 	KeyPlatformNotDebia: "本命令只支持 Debian（检测到: %s）",
 }

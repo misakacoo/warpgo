@@ -77,6 +77,11 @@ func run(args []string) int {
 		return a.cmdDown(cmdArgs)
 	case "status":
 		return a.cmdStatus(cmdArgs)
+	case "confirm":
+		return a.cmdConfirm(cmdArgs)
+	case "rollback-guard":
+		// 内部命令：由 up 派生，不进 help 列表。
+		return a.cmdRollbackGuard(cmdArgs)
 	case "dev":
 		return a.cmdDev(cmdArgs)
 	default:

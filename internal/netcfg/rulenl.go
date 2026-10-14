@@ -45,6 +45,10 @@ const (
 // FR_ACT_TO_TBL：规则的动作是"查表"。
 const actToTable = 1
 
+// fibRuleInvert 对应 fib_rule_hdr.flags 的 FIB_RULE_INVERT：
+// 让规则的匹配条件取反（例如 `not fwmark 0xca6c`）。
+const fibRuleInvert = 0x2
+
 // fibRuleHdrLen 是 struct fib_rule_hdr 的固定长度。
 const fibRuleHdrLen = 12
 
@@ -89,7 +93,7 @@ func srcMaskLen(family int) uint8 {
 // ---------------------------------------------------------------------------
 
 // fibRuleHdr 构造 12 字节的规则头。res1/res2 一律留 0。
-func fibRuleHdr(family int, srcLen uint8, table uint8) []byte {
+func fibRuleHdr(family int, srcLen uint8, table uint8, flags uint32) []byte {
 	h := make([]byte, fibRuleHdrLen)
 	h[0] = afFamily(family)
 	h[1] = 0 // dst_len
@@ -99,7 +103,7 @@ func fibRuleHdr(family int, srcLen uint8, table uint8) []byte {
 	h[5] = 0 // res1
 	h[6] = 0 // res2
 	h[7] = actToTable
-	binary.NativeEndian.PutUint32(h[8:], 0) // flags
+	binary.NativeEndian.PutUint32(h[8:], flags)
 	return h
 }
 
@@ -153,6 +157,13 @@ func EncodeRuleAdd(r Rule) ([]byte, error) {
 	if r.From.IsValid() && familyOfAddr(r.From) != r.Family {
 		return nil, fmt.Errorf("源地址 %v 与地址族 %d 不匹配", r.From, r.Family)
 	}
+	if r.FWMark != 0 && r.From.IsValid() {
+		// 两种匹配条件同时出现语义会变得难以推理，而本项目并不需要它。
+		return nil, fmt.Errorf("同一条规则里不要同时用 fwmark 与 from（%s）", r)
+	}
+	if r.Invert && r.FWMark == 0 {
+		return nil, fmt.Errorf("`not` 目前只用于 fwmark 规则（%s）", r)
+	}
 
 	var srcLen uint8
 	var hdrTable uint8
@@ -163,7 +174,12 @@ func EncodeRuleAdd(r Rule) ([]byte, error) {
 		srcLen = srcMaskLen(r.Family)
 	}
 
-	buf := fibRuleHdr(r.Family, srcLen, hdrTable)
+	var flags uint32
+	if r.Invert {
+		flags |= fibRuleInvert
+	}
+
+	buf := fibRuleHdr(r.Family, srcLen, hdrTable, flags)
 	buf = attrU32(buf, fraPriority, uint32(r.Pref))
 	// Table 为 0 时**不写**该属性；大于 255 时只能靠属性表达。
 	if r.Table > 0 {
@@ -171,6 +187,9 @@ func EncodeRuleAdd(r Rule) ([]byte, error) {
 	}
 	if r.From.IsValid() {
 		buf = attrFixed(buf, fraSrc, addrBytes(r.From))
+	}
+	if r.FWMark != 0 {
+		buf = attrU32(buf, fraFwMark, uint32(r.FWMark))
 	}
 	if r.SuppressPrefixLen >= 0 {
 		buf = attrU32(buf, fraSuppress, uint32(r.SuppressPrefixLen))
@@ -184,7 +203,7 @@ func EncodeRuleAdd(r Rule) ([]byte, error) {
 // 这样才能把同一 pref 的历史残留一次清干净。误删风险由调用方先用 ListRules
 // 核对内容来规避（见 CleanupRules）。
 func EncodeRuleDel(family, pref int) []byte {
-	buf := fibRuleHdr(family, 0, 0)
+	buf := fibRuleHdr(family, 0, 0, 0)
 	return attrU32(buf, fraPriority, uint32(pref))
 }
 
@@ -217,6 +236,7 @@ func ParseRuleMsg(b []byte) (Rule, error) {
 		Family:            familyFromAF(b[0]),
 		Table:             int(b[4]),
 		SuppressPrefixLen: -1,
+		Invert:            binary.NativeEndian.Uint32(b[8:12])&fibRuleInvert != 0,
 	}
 
 	attrs, err := netlink.UnmarshalAttributes(b[fibRuleHdrLen:])
@@ -236,6 +256,10 @@ func ParseRuleMsg(b []byte) (Rule, error) {
 		case fraTable:
 			if len(a.Data) == 4 {
 				r.Table = int(binary.NativeEndian.Uint32(a.Data))
+			}
+		case fraFwMark:
+			if len(a.Data) == 4 {
+				r.FWMark = int(binary.NativeEndian.Uint32(a.Data))
 			}
 		case fraSuppress:
 			if len(a.Data) == 4 {
@@ -327,7 +351,7 @@ func ListRules(family int) ([]Rule, error) {
 			Type:  netlink.HeaderType(unix.RTM_GETRULE),
 			Flags: netlink.Request | netlink.Dump,
 		},
-		Data: fibRuleHdr(family, 0, 0),
+		Data: fibRuleHdr(family, 0, 0, 0),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("读取规则(family=%d): %w", family, err)
