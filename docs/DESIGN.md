@@ -472,7 +472,7 @@ profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则�
 | 检查项 | 结果 |
 |---|---|
 | wireguard 接口 | 已删 |
-| 默认路由 | 已回到原生（`default via 31.57.218.1 dev enp1s0`） |
+| 默认路由 | 已回到原生（`default via <原生网关> dev <原生网卡>`） |
 | `ip -4 rule` | 只剩 `local` / `main` / `default` 三条基本规则 |
 | `table 51820` | 空 |
 | `wg-quick@warp` 单元 | 不存在 |
