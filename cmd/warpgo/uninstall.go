@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/misakacoo/warpgo/internal/dns"
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/state"
@@ -41,7 +41,7 @@ func (a *app) cmdUninstall(args []string) int {
 		Str("--ifname", &ifName).
 		Bool("--purge", &purge).
 		Bool("--keep-binary", &keepBinary)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
@@ -58,24 +58,24 @@ func (a *app) cmdUninstall(args []string) int {
 			if err := mgr.Stop(ctx); err != nil {
 				a.log.Warnf("%v", err)
 			} else {
-				a.log.Infof("%s", a.bundle.Tf(i18n.KeyUninstallStopped, systemd.UnitName))
+				a.log.Infof("%s", msg.Tf(msg.KeyUninstallStopped, systemd.UnitName))
 			}
 		}
 		if err := mgr.Disable(ctx); err != nil {
 			a.log.Warnf("%v", err)
 		} else {
-			a.log.Infof("%s", a.bundle.Tf(i18n.KeyUninstallDisabled, systemd.UnitName))
+			a.log.Infof("%s", msg.Tf(msg.KeyUninstallDisabled, systemd.UnitName))
 		}
 		if err := mgr.RemoveUnit(); err != nil {
 			a.log.Warnf("%v", err)
 		} else {
-			a.log.Infof("%s", a.bundle.Tf(i18n.KeyUninstallUnitRemoved, mgr.UnitPath()))
+			a.log.Infof("%s", msg.Tf(msg.KeyUninstallUnitRemoved, mgr.UnitPath()))
 		}
 		if err := mgr.DaemonReload(ctx); err != nil {
 			a.log.Warnf("%v", err)
 		}
 	} else {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyUninstallNoUnit, mgr.UnitPath()))
+		a.log.Infof("%s", msg.Tf(msg.KeyUninstallNoUnit, mgr.UnitPath()))
 	}
 	// reset-failed 无条件执行：即使单元文件已经删了，systemd 里可能还留着
 	// failed 记录（那会让后续同名的单元启动行为变得难以推理）。
@@ -86,7 +86,7 @@ func (a *app) cmdUninstall(args []string) int {
 	// ② 拆隧道。锁在这里才拿：先停服务再拿锁，才能保证拿到的是干净的。
 	lock, code := a.acquireLock()
 	if code != exitOK {
-		a.log.Warnf("%s", a.bundle.T(i18n.KeyUninstallLockBusy))
+		a.log.Warnf("%s", msg.T(msg.KeyUninstallLockBusy))
 	} else {
 		defer a.releaseLock(lock)
 	}
@@ -112,7 +112,7 @@ func (a *app) cmdUninstall(args []string) int {
 	if err := rollback.ClearSnapshot(); err != nil {
 		a.log.Warnf("%v", err)
 	}
-	a.log.Infof("%s", a.bundle.T(i18n.KeyUninstallTornDown))
+	a.log.Infof("%s", msg.T(msg.KeyUninstallTornDown))
 
 	// ③ 还原 DNS。必须在删状态目录之前（备份就在那里）。
 	restored, err := a.restoreDNS()
@@ -122,20 +122,20 @@ func (a *app) cmdUninstall(args []string) int {
 	case restored:
 		// restoreDNS 自己已经打印了
 	default:
-		a.log.Debugf("%s", a.bundle.T(i18n.KeyUninstallNoDNS))
+		a.log.Debugf("%s", msg.T(msg.KeyUninstallNoDNS))
 	}
 
 	// ④ 删二进制。
 	if keepBinary {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyUninstallKeptBinary, mgr.BinPath()))
+		a.log.Infof("%s", msg.Tf(msg.KeyUninstallKeptBinary, mgr.BinPath()))
 	} else if err := os.Remove(mgr.BinPath()); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			a.log.Infof("%s", a.bundle.Tf(i18n.KeyUninstallNoBinary, mgr.BinPath()))
+			a.log.Infof("%s", msg.Tf(msg.KeyUninstallNoBinary, mgr.BinPath()))
 		} else {
 			a.log.Warnf("%v", err)
 		}
 	} else {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyUninstallBinaryRemoved, mgr.BinPath()))
+		a.log.Infof("%s", msg.Tf(msg.KeyUninstallBinaryRemoved, mgr.BinPath()))
 	}
 
 	// ⑤ 运行时目录。
@@ -149,14 +149,14 @@ func (a *app) cmdUninstall(args []string) int {
 		removed, err := a.purgeStateDir(state.Dir())
 		if err != nil {
 			a.log.Errorf("%v", err)
-			a.log.Warnf("%s", a.bundle.Tf(i18n.KeyUninstallStateKept, state.Dir()))
+			a.log.Warnf("%s", msg.Tf(msg.KeyUninstallStateKept, state.Dir()))
 			return exitError
 		}
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyUninstallStatePurged, state.Dir(), len(removed)))
+		a.log.Infof("%s", msg.Tf(msg.KeyUninstallStatePurged, state.Dir(), len(removed)))
 	} else {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyUninstallStateKept, state.Dir()))
+		a.log.Infof("%s", msg.Tf(msg.KeyUninstallStateKept, state.Dir()))
 	}
 
-	a.log.Infof("%s", a.bundle.T(i18n.KeyUninstallDone))
+	a.log.Infof("%s", msg.T(msg.KeyUninstallDone))
 	return exitOK
 }

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/tunnel"
 )
@@ -44,7 +44,7 @@ type peerView struct {
 func (a *app) cmdStatus(args []string) int {
 	var asJSON bool
 	opts := newOptionSet().Bool("--json", &asJSON)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
@@ -53,7 +53,7 @@ func (a *app) cmdStatus(args []string) int {
 		if errors.Is(err, state.ErrNoRuntime) {
 			// 「没在跑」既不是崩溃也不是健康：用退出码 2（体检不健康）表达，
 			// 这样脚本能区分"明确没起"与"起了但有问题"。
-			a.log.Errorf("%s", a.bundle.T(i18n.KeyStatusNoRuntime))
+			a.log.Errorf("%s", msg.T(msg.KeyStatusNoRuntime))
 			return exitUnhealthy
 		}
 		return a.fail(err)
@@ -84,7 +84,7 @@ func (a *app) cmdStatus(args []string) int {
 	}
 
 	if !st.Exists {
-		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyStatusIfaceGone, rt.IfName))
+		a.log.Errorf("%s", msg.Tf(msg.KeyStatusIfaceGone, rt.IfName))
 		return exitUnhealthy
 	}
 	return exitOK
@@ -130,7 +130,7 @@ func newStatusView(rt *state.Runtime, st tunnel.Status) statusView {
 // 字段名用 ASCII 固定英文：它们与 runtime.json 里的键一一对应，
 // 翻译反而会让人对不上文件内容。
 func (a *app) printStatus(rt *state.Runtime, st tunnel.Status) {
-	fmt.Fprintln(a.stdout, a.bundle.T(i18n.KeyStatusTitle))
+	fmt.Fprintln(a.stdout, msg.T(msg.KeyStatusTitle))
 
 	fields := [][2]string{
 		{"if_name", rt.IfName},
@@ -148,7 +148,7 @@ func (a *app) printStatus(rt *state.Runtime, st tunnel.Status) {
 			[2]string{"wg_public_key", joinOrDash(st.PublicKey)},
 			[2]string{"wg_listen_port", fmt.Sprint(st.ListenPort)},
 		)
-		hs := a.bundle.T(i18n.KeyStatusNoHandshake)
+		hs := msg.T(msg.KeyStatusNoHandshake)
 		for _, p := range st.Peers {
 			if !p.LatestHandshake.IsZero() {
 				hs = p.LatestHandshake.UTC().Format(time.RFC3339)

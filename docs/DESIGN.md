@@ -6,7 +6,7 @@
 > 不适配 Docker、macOS、路由器（OpenWrt）等平台。
 >
 > - 仓库：`C://Users//momo//Documents//GitHub//warpgo`（本文件即仓库内 `docs/DESIGN.md`，是唯一正式版本）
-> - 状态：**M0 进行中**（骨架 + 单实例锁 + i18n + 日志）
+> - 状态：**M4 已完成**（保活 + systemd + 卸载）
 > - 编译 / 测试 / 调试**一律在 Debian 上进行**（见 §12）
 > - §14 有两处我方保留意见，待确认（DD 重装系统、Teams OAuth）
 
@@ -22,6 +22,7 @@
 | 4 | **全新开始，不迁移旧安装** | 用户已卸载旧版；不需要"导入现有 warp.conf"模块；测试可随意 |
 | 5 | **DD 重装系统不编入**（2026-10-14 追加） | 参数错一位即机器报废，且往往在远程无 IPMI 的情况下；见 §14.1 |
 | 6 | **Teams OAuth 砍掉**（2026-10-14 追加） | 与"拿到出口"无关，约 300–500 行；`cloudflare` 只做 free / WARP+ 与设备管理；见 §14.2 |
+| 7 | **只保留简体中文**（2026-10-15 追加） | 移除英语与语言选择：不再按 `LANG` 推断、不再有 `--lang`；命令行 / 日志 / 菜单一律中文，见 §8.15 |
 
 > 用户机器（Debian 12，非全局，原生 v4+v6）**已确认卸载干净** —— 见附录 A 的真机审计。
 > 该机器可作开发与真机验收的测试机，可随意安装/卸载。
@@ -52,7 +53,7 @@
 | `z` / `x` 隐藏命令 | `rule_add` / `rule_del` | `cfclient.hooks` | M8 | 供 `warp-svc` 的 ExecStartPost/ExecStop 调用 |
 | `h` 帮助 | `help()` + E[6]/C[6] | `cli.help` | M2 | 随功能逐步补全 |
 | 菜单内状态显示 | `check_system_info()` + `menu()` | `health` + `cli.menu` | M2 | IPv4/IPv6 / 模式 / 内核 / 账户类型 |
-| 语言选择 | `select_language()` + 141 条文案 | `i18n` | M1 | 中英双语，跟 `LANG` 默认 |
+| ~~语言选择~~ | `select_language()` + 141 条文案 | `msg` | — | **中英双语已移除**（2026-10-15）：只保留简体中文，见 §8.15 |
 | 账户 / license / 设备 | `api.sh` 的 account 子命令 | `cloudflare.account` | M5 | WARP+ 绑定、设备列表、注销 |
 | ~~Team 令牌注册~~ | `api.sh` 的 Teams OAuth 流程 | — | — | **已确认砍掉**（§14.2） |
 | 运行次数统计 | `statistics_of_run-times()` | — | — | **建议默认关闭**远程上报（§8.14） |
@@ -88,7 +89,7 @@
 ## 5. 架构分层
 
 ```
-cmd/warpgo             CLI / 菜单 / i18n
+cmd/warpgo             CLI / 菜单
    │
    ├── cloudflare ─────── 注册、账户、license、设备、Teams
    │
@@ -147,7 +148,7 @@ warpgo/
 │   ├── system/      ✅ platform.go               # bbr.go / kernel.go / dd.go 属 M9
 │   ├── logx/        ✅ logx.go
 │   ├── version/     ✅ version.go
-│   ├── i18n/        ✅ keys.go en.go zh.go
+│   ├── msg/         ✅ keys.go text.go             # 文案表：只有简体中文
 │   ├── split/       iptables.go dnsmasq.go ipset.go                          # M6
 │   ├── proxy/       wireproxy.go                                             # M7
 │   └── cfclient/    install.go mode.go hooks.go                              # M8
@@ -160,10 +161,10 @@ warpgo/
 与规划的两处偏差（都已落地，在此说明而不是留成「文档与现实不符」）：
 
 - 单实例锁没有单独的 `state.go` / `uninstall.go` —— 锁在 `lock.go` + `proc*.go`，
-  卸载逻辑在 `cmd/warpgo/uninstall.go`：它要用到 i18n 与 systemd，
+  卸载逻辑在 `cmd/warpgo/uninstall.go`：它要用到 msg 与 systemd，
   放进 `internal/state` 会把依赖方向搞反（底层包不该依赖业务包）。
 - 单元文件不随仓库分发，而是由 `install` 现场渲染 —— `ExecStart` 里要写安装时的
-  `--lang` 与路径参数，预置一份静态文件反而会与实际不符。
+  路径参数，预置一份静态文件反而会与实际不符。
 
 ---
 
@@ -421,10 +422,28 @@ systemd 中止 `restart`。新实现里所有规则必须**成对生成、由同
 - 现有实现**每次运行都向 `stat.cloudflare.now.cc` 上报运行次数且无开关**。
   新实现**默认不上报**，只保留本地计数；如需远程统计做成显式 opt-in。
 
-### 8.15 i18n
+### 8.15 文案（只有简体中文）
 
-中英双语，按 `LANG` 判断（`zh_*` → 中文）。文案集中在 `internal/i18n`，
-**不引入任何 i18n 框架**（两个 map + 一个 `T(key)` 函数足够）。`--lang en|zh` 可覆盖。
+**只保留简体中文。** 2026-10-15 按用户要求移除英语与语言选择：
+
+- 不再按 `LANG` / `LC_ALL` 推断语言，因此对运行环境的 locale 完全免疫；
+- 没有 `--lang`，命令行、日志、systemd 单元、菜单统统中文；
+- 包从 `internal/i18n` 改名为 `internal/msg` —— 叫 i18n 却只有一种语言，
+  会让人以为还存在多语言机制，`Bundle.Lang()` 这类接口更是死代码。
+
+保留的是 key 间接层（`internal/msg/keys.go` + `text.go`）：文案集中一处，
+不散落在调用点。两条硬约定：
+
+1. **查不到 key 时返回 key 本身，绝不返回空串**。上游用 nameref 取文案，
+   bash < 4.3 时所有文案变成空串，菜单整片空白却毫无报错 —— 用户只能看到
+   「什么都没显示」。宁可看到 `usage.lock_busy` 这种丑字符串，也不能看到空白。
+2. **文案表里每条都必须是中文**，有单测守着（唯一白名单是程序名 `warpgo`）。
+   理由很实际：一条漏改的英文在屏幕上与「缺文案」很难区分，
+   用户只会觉得"这句话怎么怪怪的"，而在单测里拦住是一句话的事。
+
+被移除的东西：`en.go`、`Lang` 类型、`Parse` / `Detect` / `New`、`Bundle`、
+`--lang` / `-L`、`KeyBadLang`，以及 `optionSet.parse` 那个「把 key 变成当前语言
+文案」的回调参数（语言只剩一种后，它就只剩一层空转）。
 
 ---
 
@@ -470,7 +489,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/warpgo --lang zh watch --interval 5m0s --ifname warp --mode non-global
+ExecStart=/usr/bin/warpgo watch --interval 5m0s --ifname warp --mode non-global
 Restart=always
 RestartSec=30s
 TimeoutStopSec=60s
@@ -483,9 +502,8 @@ WantedBy=multi-user.target
 
 1. **路径一律写绝对路径**（`/usr/bin/warpgo`）。单元里的相对路径会随 systemd 的
    工作目录变化，而那个目录不是我们能控制的。
-2. **`--lang` 在安装时被钉住**。systemd 启动的进程没有登录会话，`LANG` 通常是空的
-   —— 那样 journal 里全是英文。而看 journal 的正是当初执行 `install` 的那个人，
-   所以按他的语言固定下来最合理。想改就重跑一次 `install`。
+2. **不写 `--lang`**。曾经要在这里按安装者的语言把日志语言钉住（systemd 没有登录
+   会话，`LANG` 是空的）；只保留简体中文之后这一条自然消失。
 3. **刻意不写 `ExecStop`**。ExecStop 非零退出会让 systemd 把整个单元标成 failed，
    而且会让 restart 的语义变得难以推理 —— 上游正是在这里翻过车。
    "清理现场"是 `warpgo down` / `warpgo uninstall` 的职责，不是停止服务的职责。
@@ -501,7 +519,7 @@ WantedBy=multi-user.target
 
 | # | 内容 | 验收（真机 Debian 12） |
 |---|---|---|
-| **M0** | 骨架 + 状态/锁/i18n/日志 + 把调试残留移走 | `warpgo version` 能跑；`--lang` 生效；单实例锁三种行为（占用提示 / 心跳 / 接管）单测过 |
+| **M0** | 骨架 + 状态/锁/文案/日志 + 把调试残留移走 | `warpgo version` 能跑；单实例锁三种行为（占用提示 / 心跳 / 接管）单测过 |
 | **M1** | `cloudflare` + `wgconf`：注册、reserved、profile | ✅ **完成**（2026-10-14）：真机验收 **39/39**，见下方 |
 | **M2** | `tunnel`(内核) + `netcfg` 非全局 + `up/down/status` | ✅ **完成**（2026-10-14）：真机 **38/38** —— 见下方（菜单骨架未做，挪到功能齐了之后单独做） |
 | **M3** | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ **完成**（2026-10-14）：真机 **32/32** —— 见下方 |
@@ -600,10 +618,11 @@ profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则�
 - **坏端点（TEST-NET-1）触发硬复位**：`up --endpoint 192.0.2.1:2408` 让接口在、
   配置一致、链路不通，`watch --once` 识别出这一点并重建接口。
   两个地址族各超时 8 秒，所以这一轮约 16 秒 —— 日志里能清楚看到是哪两族失败。
-- **被锁挡住时如实报告**：退出码 2、汇总里记 `skipped 1`、接口一动不动。
-  （最初这条断言写的是"日志里要出现『锁』这个字"，而英文输出用的是
-  "another warpgo instance…" —— 又一次栽在断言依赖措辞上。现在脚本把 `LANG`
-  钉死，并且断言改成结构性事实。）
+- **被锁挡住时如实报告**：退出码 2、汇总里记 `跳过 1`、接口一动不动。
+  （这条断言最初写的是"日志里要出现『锁』这个字"，而程序当时输出英文，
+  用的是 "another warpgo instance…" —— 又一次栽在断言依赖措辞上。当时加了
+  "把脚本 `LANG` 钉死 + 断言改成结构性事实"两层补救；**语言机制现已整体移除，
+  这类问题从根上不会再有了**。）
 - **旧格式遗留锁被接管，无辜进程未被误杀**：假锁里放的是 `sleep 300` 的 PID，
   日志显示"无法确认身份，只接管不杀"。
 - **install / uninstall 全链路**：单元写入 `/etc/systemd/system/warpgo-watch.service`
@@ -634,7 +653,8 @@ profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则�
 - `--no-confirm` 场景（模拟「主流程没能确认」）：保险丝在 25 秒后**自动回滚**，
   网络恢复，`/run/warpgo/guard.log` 留下完整回滚记录。这一条才是保险丝存在的理由。
 - 脚本自己踩的坑记一笔：断言不能只 grep 中文（比如「自检」）——
-  被测程序的输出语言取决于运行环境的 locale，验收脚本不该假设它。
+  当时被测程序的输出语言取决于 locale。**语言机制现已移除（只保留简体中文），
+  这类问题从根上消失了**；验收脚本里「中英都认」的正则也已清理成只认中文。
 
 ### M2 真机实测（2026-10-14）
 

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 )
 
 // optionSet 是一个极简选项解析器，只支持三种形态：
@@ -40,18 +40,22 @@ func (o *optionSet) Str(name string, p *string) *optionSet { o.strs[name] = p; r
 // Int 注册一个整数选项。
 func (o *optionSet) Int(name string, p *int) *optionSet { o.ints[name] = p; return o }
 
-// parse 解析参数。msg 用于把错误转成当前语言的文案（调用方传 bundle.Tf）。
-func (o *optionSet) parse(args []string, msg func(key string, a ...any) string) error {
+// parse 解析参数，出错时返回可直接展示的文案。
+//
+// 这里曾经要调用方传一个「把 key 变成当前语言文案」的回调（bundle.Tf）。
+// 语言机制移除后它只剩一层空转 —— 函数自己取文案更直接，
+// 顺带避免了参数名与包名 `msg` 相撞这种尴尬。
+func (o *optionSet) parse(args []string) error {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		name, value, hasValue := splitOption(arg)
 		if !strings.HasPrefix(name, "-") {
-			return errors.New(msg(i18n.KeyBadOpt, arg))
+			return errors.New(msg.Tf(msg.KeyBadOpt, arg))
 		}
 
 		if p, ok := o.bools[name]; ok {
 			if hasValue {
-				return errors.New(msg(i18n.KeyBadOpt, arg))
+				return errors.New(msg.Tf(msg.KeyBadOpt, arg))
 			}
 			*p = true
 			continue
@@ -66,7 +70,7 @@ func (o *optionSet) parse(args []string, msg func(key string, a ...any) string) 
 				i++
 				return args[i], nil
 			}
-			return "", errors.New(msg(i18n.KeyNeedArg, name))
+			return "", errors.New(msg.Tf(msg.KeyNeedArg, name))
 		}
 
 		if p, ok := o.strs[name]; ok {
@@ -84,13 +88,13 @@ func (o *optionSet) parse(args []string, msg func(key string, a ...any) string) 
 			}
 			n, convErr := strconv.Atoi(strings.TrimSpace(v))
 			if convErr != nil {
-				return errors.New(msg(i18n.KeyBadOpt, arg))
+				return errors.New(msg.Tf(msg.KeyBadOpt, arg))
 			}
 			*p = n
 			continue
 		}
 
-		return errors.New(msg(i18n.KeyBadOpt, arg))
+		return errors.New(msg.Tf(msg.KeyBadOpt, arg))
 	}
 	return nil
 }

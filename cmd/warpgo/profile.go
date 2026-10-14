@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/wgconf"
 )
@@ -32,7 +32,7 @@ func (a *app) cmdProfile(args []string) int {
 		Str("--out", &out).
 		Bool("--table-off", &tableOff).
 		Bool("--no-dns", &noDNS)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
@@ -54,7 +54,7 @@ func (a *app) cmdProfile(args []string) int {
 		Endpoint:  endpoint,
 		TableOff:  tableOff,
 		NoDNS:     noDNS,
-		Note:      a.bundle.Tf(i18n.KeyProfNote, acct.ID),
+		Note:      msg.Tf(msg.KeyProfNote, acct.ID),
 	})
 	if err != nil {
 		return a.fail(err)
@@ -66,20 +66,20 @@ func (a *app) cmdProfile(args []string) int {
 		if err := state.WriteFileAtomic(out, []byte(text), state.FilePerm); err != nil {
 			return a.fail(err)
 		}
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyProfSaved, out, "0600"))
+		a.log.Infof("%s", msg.Tf(msg.KeyProfSaved, out, "0600"))
 	} else {
 		fmt.Fprint(a.stdout, text)
 	}
 
 	// 提示走 stderr（经 log），所以 stdout 可以安全重定向进文件。
 	if tableOff {
-		a.log.Warnf("%s", a.bundle.T(i18n.KeyProfTableOffHint))
+		a.log.Warnf("%s", msg.T(msg.KeyProfTableOffHint))
 	}
 	for _, f := range p.Skipped {
-		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyProfSkipped, f.Label()))
+		a.log.Warnf("%s", msg.Tf(msg.KeyProfSkipped, f.Label()))
 	}
 	if acct.HasReserved() {
-		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyProfKernelWarn, acct.Reserved))
+		a.log.Warnf("%s", msg.Tf(msg.KeyProfKernelWarn, acct.Reserved))
 	}
 	return exitOK
 }

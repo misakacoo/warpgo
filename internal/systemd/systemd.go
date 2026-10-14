@@ -77,12 +77,6 @@ type UnitParams struct {
 	BinPath string
 	// ExecStart 是 watch 子命令的完整参数（不含可执行文件路径）。
 	ExecStart []string
-	// Lang 用来固定日志语言。
-	//
-	// systemd 启动的进程没有登录会话，LANG 通常是空的 —— 那样 journal 里
-	// 会是英文。而看 journal 的正是当初执行 install 的那个人，所以按他的
-	// 语言固定下来最合理。想改就重跑一次 install。
-	Lang string
 	// RestartSec 是重启间隔；留空则用 DefaultRestartSec。
 	RestartSec time.Duration
 }
@@ -102,11 +96,8 @@ func Render(p UnitParams) string {
 		restartSec = DefaultRestartSec
 	}
 
-	args := make([]string, 0, len(p.ExecStart)+2)
+	args := make([]string, 0, len(p.ExecStart)+1)
 	args = append(args, bin)
-	if p.Lang != "" {
-		args = append(args, "--lang", p.Lang)
-	}
 	args = append(args, p.ExecStart...)
 
 	var b strings.Builder

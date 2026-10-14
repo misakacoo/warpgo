@@ -12,12 +12,11 @@ import (
 func TestRenderEssentials(t *testing.T) {
 	content := Render(UnitParams{
 		ExecStart: []string{"watch", "--interval", "5m0s", "--ifname", "warp", "--mode", "non-global"},
-		Lang:      "zh",
 	})
 
 	checks := []struct{ want, why string }{
-		{"ExecStart=/usr/bin/warpgo --lang zh watch --interval 5m0s --ifname warp --mode non-global",
-			"ExecStart 必须是绝对路径 + 完整参数，且语言要固定下来（systemd 里 LANG 通常是空的）"},
+		{"ExecStart=/usr/bin/warpgo watch --interval 5m0s --ifname warp --mode non-global",
+			"ExecStart 必须是绝对路径 + 完整参数"},
 		{"Restart=always", "服务必须自愈"},
 		{"RestartSec=30s", "重启间隔"},
 		{"WantedBy=multi-user.target", "开机自启靠这一行"},
@@ -44,9 +43,9 @@ func TestRenderDefaultBinPathAndRestartSec(t *testing.T) {
 	if !strings.Contains(content, "RestartSec="+DefaultRestartSec.String()) {
 		t.Errorf("未填 RestartSec 时应当用默认值 %s", DefaultRestartSec)
 	}
-	// 没有语言时不该出现空的 --lang。
+	// 语言机制已移除（只保留简体中文）：单元里不该再出现 --lang。
 	if strings.Contains(content, "--lang") {
-		t.Error("没有语言时不该写出 --lang")
+		t.Error("单元里不该再出现 --lang —— 语言机制已移除")
 	}
 }
 

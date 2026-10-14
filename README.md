@@ -14,7 +14,7 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
-| M0 | 骨架、单实例锁、i18n、日志 | ✅ 完成 |
+| M0 | 骨架、单实例锁、文案、日志 | ✅ 完成 |
 | M1 | 注册 / reserved / profile 生成 | ✅ 完成（真机 39/39） |
 | M2 | 内核后端 + 非全局出口 + up/down/status | ✅ 完成（真机 38/38） |
 | M3 | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ 完成（真机 32/32） |

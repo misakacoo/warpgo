@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/misakacoo/warpgo/internal/cloudflare"
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/state"
 )
 
@@ -23,7 +23,7 @@ func (a *app) cmdAccount(args []string) int {
 		Bool("--refresh", &refresh).
 		Bool("--enable", &enable).
 		Str("--license", &license)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
@@ -44,7 +44,7 @@ func (a *app) cmdAccount(args []string) int {
 			if _, err := client.EnableWarp(ctx, acct.ID, acct.Token); err != nil {
 				return a.fail(err)
 			}
-			a.log.Infof("%s", a.bundle.T(i18n.KeyAcctEnableOK))
+			a.log.Infof("%s", msg.T(msg.KeyAcctEnableOK))
 		}
 
 		if license != "" {
@@ -52,7 +52,7 @@ func (a *app) cmdAccount(args []string) int {
 				return a.fail(err)
 			}
 			acct.License = license
-			a.log.Infof("%s", a.bundle.T(i18n.KeyAcctLicenseOK))
+			a.log.Infof("%s", msg.T(msg.KeyAcctLicenseOK))
 		}
 
 		if refresh {
@@ -61,7 +61,7 @@ func (a *app) cmdAccount(args []string) int {
 				return a.fail(err)
 			}
 			acct.ApplyDevice(dev)
-			a.log.Infof("%s", a.bundle.T(i18n.KeyAcctRefreshed))
+			a.log.Infof("%s", msg.T(msg.KeyAcctRefreshed))
 		}
 
 		if err := acct.Save(acctPath); err != nil {
@@ -86,9 +86,9 @@ func (a *app) cmdAccount(args []string) int {
 // printAccount 打印人类可读的账户摘要。
 //
 // 字段名用 ASCII 固定英文（不翻译）：它们是 account.json 里的键名，
-// 翻译反而会让人对不上文件内容。只有句子走 i18n。
+// 翻译反而会让人对不上文件内容。只有句子走 msg。
 func (a *app) printAccount(acct *cloudflare.Account, path string) {
-	fmt.Fprintln(a.stdout, a.bundle.T(i18n.KeyAcctTitle))
+	fmt.Fprintln(a.stdout, msg.T(msg.KeyAcctTitle))
 
 	registered := "-"
 	if !acct.RegisteredAt.IsZero() {
@@ -111,5 +111,5 @@ func (a *app) printAccount(acct *cloudflare.Account, path string) {
 	for _, f := range fields {
 		fmt.Fprintf(a.stdout, "  %-16s %s\n", f[0], f[1])
 	}
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyAcctSecretsHint, path))
+	a.log.Infof("%s", msg.Tf(msg.KeyAcctSecretsHint, path))
 }

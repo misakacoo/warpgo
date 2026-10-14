@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/misakacoo/warpgo/internal/cloudflare"
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/wgconf"
 )
@@ -28,7 +28,7 @@ func (a *app) cmdRegister(args []string) int {
 		locale string
 	)
 	opts := newOptionSet().Bool("--force", &force).Str("--locale", &locale)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
@@ -37,18 +37,18 @@ func (a *app) cmdRegister(args []string) int {
 		// 已有账户时默认拒绝重新注册：新账户会分配到不同的 WARP IP，
 		// 用户所有对外访问的出口地址都会变。这必须是显式决定，
 		// 不能是"顺手又跑了一次 register"的副作用。
-		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyRegExists, acctPath))
+		a.log.Errorf("%s", msg.Tf(msg.KeyRegExists, acctPath))
 		return exitError
 	}
 
 	// 先确保状态目录可写。放在注册之前是刻意的：否则会先占掉一个服务端设备、
 	// 再发现存不下来（既浪费一个设备名额，也让用户以为注册失败了）。
 	if err := state.EnsureDir(state.Dir()); err != nil {
-		a.log.Errorf("%s: %v", a.bundle.Tf(i18n.KeyNeedRoot, state.Dir()), err)
+		a.log.Errorf("%s: %v", msg.Tf(msg.KeyNeedRoot, state.Dir()), err)
 		return exitError
 	}
 
-	a.log.Infof("%s", a.bundle.T(i18n.KeyRegStart))
+	a.log.Infof("%s", msg.T(msg.KeyRegStart))
 
 	// 私钥在本地生成，只把公钥发出去 —— 服务端从头到尾见不到私钥。
 	kp, err := wgconf.GenerateKeyPair()
@@ -93,18 +93,18 @@ func (a *app) cmdRegister(args []string) int {
 		return a.fail(err)
 	}
 
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyRegDone, acct.ID, joinOrDash(acct.AccountType)))
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyRegSaved, acctPath))
+	a.log.Infof("%s", msg.Tf(msg.KeyRegDone, acct.ID, joinOrDash(acct.AccountType)))
+	a.log.Infof("%s", msg.Tf(msg.KeyRegSaved, acctPath))
 	if acct.HasReserved() {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyRegReservedOK, acct.Reserved, acct.ClientID))
+		a.log.Infof("%s", msg.Tf(msg.KeyRegReservedOK, acct.Reserved, acct.ClientID))
 	} else {
-		a.log.Warnf("%s", a.bundle.T(i18n.KeyRegReservedNone))
+		a.log.Warnf("%s", msg.T(msg.KeyRegReservedNone))
 	}
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyRegAddr, strings.Join(acct.Addresses(), ", ")))
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyRegEndpoint, acct.Endpoint))
+	a.log.Infof("%s", msg.Tf(msg.KeyRegAddr, strings.Join(acct.Addresses(), ", ")))
+	a.log.Infof("%s", msg.Tf(msg.KeyRegEndpoint, acct.Endpoint))
 
 	if enableErr != nil {
-		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyRegEnableFailed, enableErr))
+		a.log.Warnf("%s", msg.Tf(msg.KeyRegEnableFailed, enableErr))
 		return exitError
 	}
 	return exitOK
@@ -115,7 +115,7 @@ func (a *app) loadAccount() (*cloudflare.Account, int) {
 	acct, err := cloudflare.LoadAccount(state.AccountPath())
 	if err != nil {
 		if errors.Is(err, cloudflare.ErrNoAccount) {
-			a.log.Errorf("%s", a.bundle.T(i18n.KeyAcctNone))
+			a.log.Errorf("%s", msg.T(msg.KeyAcctNone))
 			return nil, exitError
 		}
 		a.log.Errorf("%v", err)

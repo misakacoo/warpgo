@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/misakacoo/warpgo/internal/dns"
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/state"
 )
 
@@ -26,7 +26,7 @@ func (a *app) applyDNS(servers []string) error {
 		return a.dnsErr(err, m.ResolvPath)
 	}
 	if created {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyDNSBackup, m.BackupPath))
+		a.log.Infof("%s", msg.Tf(msg.KeyDNSBackup, m.BackupPath))
 	}
 	if err := m.Set(servers); err != nil {
 		return a.dnsErr(err, m.ResolvPath)
@@ -46,14 +46,14 @@ func (a *app) restoreDNS() (restored bool, err error) {
 	if err := m.Restore(); err != nil {
 		return false, a.dnsErr(err, m.ResolvPath)
 	}
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyDNSRestored, m.ResolvPath))
+	a.log.Infof("%s", msg.Tf(msg.KeyDNSRestored, m.ResolvPath))
 	return true, nil
 }
 
 // dnsErr 把 dns 包的哨兵错误翻成能指导行动的话。
 func (a *app) dnsErr(err error, path string) error {
 	if errors.Is(err, dns.ErrSymlink) {
-		return fmt.Errorf("%s", a.bundle.Tf(i18n.KeyDNSSymlink, path))
+		return fmt.Errorf("%s", msg.Tf(msg.KeyDNSSymlink, path))
 	}
 	return err
 }

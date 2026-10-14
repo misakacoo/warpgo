@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/rollback"
 )
 
@@ -21,7 +21,7 @@ func (a *app) cmdRollbackGuard(args []string) int {
 		snapshot   string
 	)
 	opts := newOptionSet().Str("--timeout", &timeoutStr).Str("--snapshot", &snapshot)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
@@ -47,25 +47,25 @@ func (a *app) cmdRollbackGuard(args []string) int {
 // guardLog 把回滚事件翻译成当前语言的文案。
 //
 // 库层只发事件、不拼文案（见 rollback.Event 的说明），翻译集中在这里，
-// 于是回滚逻辑本身与语言无关，单独测它也不需要 i18n。
+// 于是回滚逻辑本身与文案无关，单独测它也不依赖 msg。
 func (a *app) guardLog(ev rollback.Event, args ...any) {
 	switch ev {
 	case rollback.EvArmed:
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyGuardArmed, args...))
+		a.log.Infof("%s", msg.Tf(msg.KeyGuardArmed, args...))
 	case rollback.EvConfirmed:
-		a.log.Infof("%s", a.bundle.T(i18n.KeyGuardConfirmed))
+		a.log.Infof("%s", msg.T(msg.KeyGuardConfirmed))
 	case rollback.EvTimeout:
-		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyGuardTimeout, args...))
+		a.log.Warnf("%s", msg.Tf(msg.KeyGuardTimeout, args...))
 	case rollback.EvRollbackRules:
-		a.log.Warnf("%s", a.bundle.T(i18n.KeyGuardRBRules))
+		a.log.Warnf("%s", msg.T(msg.KeyGuardRBRules))
 	case rollback.EvRollbackTable:
-		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyGuardRBTable, args...))
+		a.log.Warnf("%s", msg.Tf(msg.KeyGuardRBTable, args...))
 	case rollback.EvRollbackLink:
-		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyGuardRBLink, args...))
+		a.log.Warnf("%s", msg.Tf(msg.KeyGuardRBLink, args...))
 	case rollback.EvRollbackDone:
-		a.log.Warnf("%s", a.bundle.T(i18n.KeyGuardRBDone))
+		a.log.Warnf("%s", msg.T(msg.KeyGuardRBDone))
 	case rollback.EvNote:
-		a.log.Debugf("%s", a.bundle.Tf(i18n.KeyGuardNote, args...))
+		a.log.Debugf("%s", msg.Tf(msg.KeyGuardNote, args...))
 	default:
 		a.log.Debugf("rollback event %d: %v", int(ev), args)
 	}
@@ -78,19 +78,19 @@ func (a *app) guardLog(ev rollback.Event, args ...any) {
 //   - 用户想给自己留一个"跑完再看一眼"的窗口。
 func (a *app) cmdConfirm(args []string) int {
 	if len(args) > 0 {
-		fmt.Fprintf(a.stderr, "%s\n", a.bundle.Tf(i18n.KeyBadOpt, args[0]))
+		fmt.Fprintf(a.stderr, "%s\n", msg.Tf(msg.KeyBadOpt, args[0]))
 		return exitError
 	}
 
 	// 没有待确认的变更时说清楚，免得用户以为"确认生效了"。
 	if _, err := rollback.Load(rollback.SnapshotPath()); err != nil {
-		a.log.Warnf("%s", a.bundle.T(i18n.KeyConfirmNone))
+		a.log.Warnf("%s", msg.T(msg.KeyConfirmNone))
 		return exitOK
 	}
 
 	if err := rollback.Confirm(); err != nil {
 		return a.fail(err)
 	}
-	a.log.Infof("%s", a.bundle.T(i18n.KeyConfirmOK))
+	a.log.Infof("%s", msg.T(msg.KeyConfirmOK))
 	return exitOK
 }

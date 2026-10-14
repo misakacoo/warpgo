@@ -1,12 +1,13 @@
-package i18n
+package msg
 
-// 文案 key。集中定义，避免各处硬编码字符串导致漏翻译。
+// 文案 key。集中定义，避免各处硬编码字符串（也就不会有"改了这里忘了那里"）。
+//
+// 曾经有个 KeyBadLang（不支持的语言）。语言机制已移除，它也随之删掉。
 const (
 	// 通用
 	KeyUsage     = "usage"
 	KeyVersion   = "version.label"
 	KeyUnknownCm = "cli.unknown_command"
-	KeyBadLang   = "cli.bad_language"
 	KeyNeedArg   = "cli.missing_argument"
 	KeyBadOpt    = "cli.bad_option"
 
@@ -168,3 +169,137 @@ const (
 	KeyPlatformDebian   = "platform.debian"
 	KeyPlatformNotDebia = "platform.not_debian"
 )
+
+
+// AllKeys 列出本文件声明的全部 key。
+//
+// 它存在的唯一目的是让单测能守住「声明与文案一一对应」：
+// 加了常量却忘了写文案 → 测试红；写了文案却没有常量 → 测试也红。
+// 没有它就只能靠人眼比对两个文件，而那一定会漏。
+func AllKeys() []string {
+	return []string{
+		KeyUsage,
+		KeyVersion,
+		KeyUnknownCm,
+		KeyNeedArg,
+		KeyBadOpt,
+		KeyLockBusy,
+		KeyLockAcquired,
+		KeyLockReleased,
+		KeyLockTakeoverStale,
+		KeyLockTakeoverLegacy,
+		KeyLockTakeoverUnverif,
+		KeyLockLeftover,
+		KeyLockKillFailed,
+		KeyLockKilled,
+		KeyLockTouch,
+		KeyNotImplemented,
+		KeyRegStart,
+		KeyRegDone,
+		KeyRegSaved,
+		KeyRegExists,
+		KeyRegReservedOK,
+		KeyRegReservedNone,
+		KeyRegEnableFailed,
+		KeyRegAddr,
+		KeyRegEndpoint,
+		KeyAcctNone,
+		KeyAcctTitle,
+		KeyAcctRefreshed,
+		KeyAcctEnableOK,
+		KeyAcctLicenseOK,
+		KeyAcctSecretsHint,
+		KeyNeedRoot,
+		KeyUpStart,
+		KeyUpLinkCreated,
+		KeyUpLinkReused,
+		KeyUpAddrs,
+		KeyUpConfigured,
+		KeyUpCfgMatched,
+		KeyUpNetcfg,
+		KeyUpCleaned,
+		KeyUpForce,
+		KeyUpDone,
+		KeyUpNotDebian,
+		KeyDownStart,
+		KeyDownNothing,
+		KeyDownSummary,
+		KeyDownDone,
+		KeyGuardArmed,
+		KeyGuardConfirmed,
+		KeyGuardTimeout,
+		KeyGuardRBRules,
+		KeyGuardRBTable,
+		KeyGuardRBLink,
+		KeyGuardRBDone,
+		KeyGuardNote,
+		KeyConfirmOK,
+		KeyConfirmNone,
+		KeyUpGlobalStart,
+		KeyUpGuardSpawned,
+		KeyUpChecking,
+		KeyUpCheckOK,
+		KeyUpCheckFail,
+		KeyUpRollingBack,
+		KeyUpNoConfirm,
+		KeyUpGlobalDone,
+		KeyStatusTitle,
+		KeyStatusNoRuntime,
+		KeyStatusIfaceGone,
+		KeyStatusProbeOK,
+		KeyStatusProbeFail,
+		KeyStatusHandshake,
+		KeyStatusNoHandshake,
+		KeyNetRemovedRule,
+		KeyNetAddedRule,
+		KeyNetAddedRoute,
+		KeyNetFlushed,
+		KeyNetDeletedLink,
+		KeyNetRefuseTable,
+		KeyProfNote,
+		KeyProfSaved,
+		KeyProfSkipped,
+		KeyProfKernelWarn,
+		KeyProfTableOffHint,
+		KeyWatchStart,
+		KeyWatchRound,
+		KeyWatchHealthy,
+		KeyWatchUnhealthy,
+		KeyWatchRebuilding,
+		KeyWatchRebuilt,
+		KeyWatchFailed,
+		KeyWatchLocked,
+		KeyWatchStopped,
+		KeyWatchNotDebian,
+		KeyUpHardReset,
+		KeyDNSSet,
+		KeyDNSBackup,
+		KeyDNSRestored,
+		KeyDNSSymlink,
+		KeyInstallNotDebian,
+		KeyInstallBinary,
+		KeyInstallBinarySame,
+		KeyInstallUnit,
+		KeyInstallEnabled,
+		KeyInstallNoStart,
+		KeyInstallStarted,
+		KeyInstallDone,
+		KeyPurgeRefused,
+		KeyUninstallStopped,
+		KeyUninstallDisabled,
+		KeyUninstallUnitRemoved,
+		KeyUninstallNoUnit,
+		KeyUninstallLockBusy,
+		KeyUninstallTornDown,
+		KeyUninstallNoDNS,
+		KeyUninstallBinaryRemoved,
+		KeyUninstallNoBinary,
+		KeyUninstallKeptBinary,
+		KeyUninstallStateKept,
+		KeyUninstallStatePurged,
+		KeyUninstallDone,
+		KeyDownWatchStopped,
+		KeyPlatformDebian,
+		KeyPlatformNotDebia,
+	}
+}

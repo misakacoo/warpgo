@@ -117,7 +117,7 @@ note "耗时 ${bad_elapsed}s"
 
 [ "$rc" -eq 2 ] && ok "退出码 2（体检不健康）—— 没有假装成功" || bad "退出码 $rc（期望 2）"
 # 断言同时认中英两种措辞：验收脚本不该假设被测程序的输出语言。
-grep -qE "自检|self-check" /tmp/m3-selfcheck.log && ok "日志说明了这是自检未通过" || bad "日志没说清失败原因"
+grep -q "自检" /tmp/m3-selfcheck.log && ok "日志说明了这是自检未通过" || bad "日志没说清失败原因"
 
 # 关键：自检失败要**立即**回滚，而不是等保险丝超时（45s）。
 [ "$bad_elapsed" -lt 60 ] && ok "远早于保险丝超时（120s）就主动回滚了：耗时 ${bad_elapsed}s" \

@@ -1,7 +1,9 @@
-package i18n
+package msg
 
-// zh 中文文案。
-var zh = map[string]string{
+// text 是**唯一**的文案表：简体中文。
+//
+// 曾经还有一份 en.go。已按要求移除，见包注释。
+var text = map[string]string{
 	KeyUsage: `warpgo —— Debian 上的 Cloudflare WARP 管理工具
 （fscarmen/warp 的 Go 重写版；只支持 Debian，不含 Docker，不适配其他平台）
 
@@ -31,7 +33,6 @@ var zh = map[string]string{
   dev platform         检查本机是否 Debian
 
 全局选项:
-  --lang en|zh         强制输出语言（默认按 LANG 推断）
   -v, --verbose        调试日志
   -q, --quiet          只显示警告与错误
 
@@ -41,7 +42,6 @@ var zh = map[string]string{
 
 	KeyVersion:   "warpgo",
 	KeyUnknownCm: "未知子命令: %s",
-	KeyBadLang:   "不支持的语言: %q（只支持 en 或 zh）",
 	KeyNeedArg:   "选项 %s 需要提供取值",
 	KeyBadOpt:    "未知选项: %s",
 

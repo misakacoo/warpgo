@@ -14,7 +14,7 @@ import (
 
 	"github.com/misakacoo/warpgo/internal/cloudflare"
 	"github.com/misakacoo/warpgo/internal/health"
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/state"
@@ -140,18 +140,18 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 		if err := a.spawnGuard(guardTimeout); err != nil {
 			return nil, a.fail(err)
 		}
-		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyUpGuardSpawned, guardTimeout))
-		a.log.Warnf("%s", a.bundle.T(i18n.KeyUpGlobalStart))
+		a.log.Warnf("%s", msg.Tf(msg.KeyUpGuardSpawned, guardTimeout))
+		a.log.Warnf("%s", msg.T(msg.KeyUpGlobalStart))
 	}
 
 	if opt.Force {
-		a.say(opt.Quiet, i18n.KeyUpForce)
+		a.say(opt.Quiet, msg.KeyUpForce)
 		if err := a.tearDown(ctx, cfg.IfName); err != nil {
 			a.log.Warnf("%v", err)
 		}
 	}
 
-	a.say(opt.Quiet, i18n.KeyUpStart, opt.Mode, cfg.IfName)
+	a.say(opt.Quiet, msg.KeyUpStart, opt.Mode, cfg.IfName)
 
 	tun, err := tunnel.NewKernel(cfg.IfName)
 	if err != nil {
@@ -171,7 +171,7 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 	// 变的只是这一次握手。
 	res := &ensureResult{Plan: plan, Change: ch}
 	if opt.ResetIfIdle && !ch.LinkCreated && ch.ConfigMatched {
-		a.say(opt.Quiet, i18n.KeyUpHardReset)
+		a.say(opt.Quiet, msg.KeyUpHardReset)
 		if err := a.tearDown(ctx, cfg.IfName); err != nil {
 			return nil, a.fail(err)
 		}
@@ -189,16 +189,16 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 	}
 	res.Net = nres
 	if len(nres.RulesRemoved) > 0 {
-		a.say(opt.Quiet, i18n.KeyUpCleaned, len(nres.RulesRemoved))
+		a.say(opt.Quiet, msg.KeyUpCleaned, len(nres.RulesRemoved))
 	}
-	a.say(opt.Quiet, i18n.KeyUpNetcfg, nres.RoutesAdded, nres.RulesAdded)
-	a.say(opt.Quiet, i18n.KeyUpAddrs, strings.Join(plan.AddrStrings(), ", "))
+	a.say(opt.Quiet, msg.KeyUpNetcfg, nres.RoutesAdded, nres.RulesAdded)
+	a.say(opt.Quiet, msg.KeyUpAddrs, strings.Join(plan.AddrStrings(), ", "))
 
 	if len(opt.DNS) > 0 {
 		if err := a.applyDNS(opt.DNS); err != nil {
 			return nil, a.fail(err)
 		}
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyDNSSet, strings.Join(opt.DNS, ", ")))
+		a.log.Infof("%s", msg.Tf(msg.KeyDNSSet, strings.Join(opt.DNS, ", ")))
 	}
 
 	if err := rtState.Save(state.RuntimePath()); err != nil {
@@ -212,7 +212,7 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 		}
 	}
 
-	res.Detail = a.bundle.Tf(i18n.KeyUpDone, opt.Mode)
+	res.Detail = msg.Tf(msg.KeyUpDone, opt.Mode)
 	return res, exitOK
 }
 
@@ -222,10 +222,10 @@ func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt en
 // "已添加规则…" 淹没；而真正要看"它到底做了什么"的时候，`-v` 就能看到全部。
 func (a *app) say(quiet bool, key string, args ...any) {
 	if quiet {
-		a.log.Debugf("%s", a.bundle.Tf(key, args...))
+		a.log.Debugf("%s", msg.Tf(key, args...))
 		return
 	}
-	a.log.Infof("%s", a.bundle.Tf(key, args...))
+	a.log.Infof("%s", msg.Tf(key, args...))
 }
 
 // buildTunnel 把账户翻译成「隧道参数 + 期望网络状态 + 运行态」。
@@ -368,16 +368,16 @@ func defaultAllowedIPs(addrs []netip.Prefix) []netip.Prefix {
 // reportChange 说明这次 Ensure 到底动了什么 —— 幂等性因此变得可观测。
 func (a *app) reportChange(quiet bool, ch tunnel.Change, cfg tunnel.Config) {
 	if ch.LinkCreated {
-		a.say(quiet, i18n.KeyUpLinkCreated, cfg.IfName, cfg.MTU)
+		a.say(quiet, msg.KeyUpLinkCreated, cfg.IfName, cfg.MTU)
 	} else {
 		// 复用时明确说出来：用户最关心的恰恰是"这次有没有换 IP"。
-		a.say(quiet, i18n.KeyUpLinkReused, cfg.IfName)
+		a.say(quiet, msg.KeyUpLinkReused, cfg.IfName)
 	}
 	switch {
 	case ch.Configured:
-		a.say(quiet, i18n.KeyUpConfigured)
+		a.say(quiet, msg.KeyUpConfigured)
 	case ch.ConfigMatched:
-		a.say(quiet, i18n.KeyUpCfgMatched)
+		a.say(quiet, msg.KeyUpCfgMatched)
 	}
 }
 
@@ -393,18 +393,18 @@ func (a *app) netlog(format string, args ...any) {
 // 45 秒缩到几秒。保险丝是给"连这段代码都没跑完"的极端情况兜底的。
 func (a *app) finishGlobal(ctx context.Context, snap *rollback.Snapshot, plan *netcfg.Plan, timeout time.Duration, noConfirm bool) int {
 	if noConfirm {
-		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyUpNoConfirm, timeout))
+		a.log.Warnf("%s", msg.Tf(msg.KeyUpNoConfirm, timeout))
 		return exitOK
 	}
 
-	a.log.Infof("%s", a.bundle.T(i18n.KeyUpChecking))
+	a.log.Infof("%s", msg.T(msg.KeyUpChecking))
 	// 自检有独立的预算，且必须明显小于保险丝超时（见 selfCheckBudget 的说明）。
 	checkCtx, cancel := context.WithTimeout(ctx, selfCheckBudget)
 	defer cancel()
 	detail, err := a.selfCheck(checkCtx, plan)
 	if err != nil {
-		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyUpCheckFail, err))
-		a.log.Warnf("%s", a.bundle.T(i18n.KeyUpRollingBack))
+		a.log.Errorf("%s", msg.Tf(msg.KeyUpCheckFail, err))
+		a.log.Warnf("%s", msg.T(msg.KeyUpRollingBack))
 		if rerr := rollback.Rollback(snap, a.guardLog); rerr != nil {
 			return a.fail(rerr)
 		}
@@ -416,12 +416,12 @@ func (a *app) finishGlobal(ctx context.Context, snap *rollback.Snapshot, plan *n
 		_ = rollback.ClearSnapshot()
 		return exitUnhealthy
 	}
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyUpCheckOK, detail))
+	a.log.Infof("%s", msg.Tf(msg.KeyUpCheckOK, detail))
 	if err := rollback.Confirm(); err != nil {
 		return a.fail(err)
 	}
 	_ = rollback.ClearSnapshot()
-	a.log.Infof("%s", a.bundle.T(i18n.KeyUpGlobalDone))
+	a.log.Infof("%s", msg.T(msg.KeyUpGlobalDone))
 	return exitOK
 }
 
@@ -511,7 +511,6 @@ func (a *app) spawnGuard(timeout time.Duration) error {
 	defer logFile.Close()
 
 	cmd := exec.Command(exe,
-		"--lang", string(a.bundle.Lang()),
 		"rollback-guard",
 		"--timeout", timeout.String(),
 		"--snapshot", rollback.SnapshotPath())
@@ -538,7 +537,7 @@ func (a *app) acquireLock() (*state.Lock, int) {
 		return nil, exitError
 	}
 	if st == state.StatusBusy {
-		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyLockBusy, holderPID(state.DefaultLockPath)))
+		a.log.Errorf("%s", msg.Tf(msg.KeyLockBusy, holderPID(state.DefaultLockPath)))
 		return nil, exitLockBusy
 	}
 	a.reportTakeover(lock)
@@ -560,7 +559,7 @@ func (a *app) tryLock() (release func(), ok bool) {
 		return nil, false
 	}
 	if st == state.StatusBusy {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyLockBusy, holderPID(state.DefaultLockPath)))
+		a.log.Infof("%s", msg.Tf(msg.KeyLockBusy, holderPID(state.DefaultLockPath)))
 		return nil, false
 	}
 	a.reportTakeover(lock)

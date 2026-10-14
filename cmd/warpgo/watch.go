@@ -10,7 +10,7 @@ import (
 
 	"github.com/misakacoo/warpgo/internal/cloudflare"
 	"github.com/misakacoo/warpgo/internal/health"
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/keepalive"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/rollback"
@@ -53,7 +53,7 @@ func (a *app) cmdWatch(args []string) int {
 		Str("--guard-timeout", &guardTimeoutStr).
 		Bool("--once", &once).
 		Int("--max-rounds", &maxRounds)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
@@ -102,7 +102,7 @@ func (a *app) cmdWatch(args []string) int {
 
 	// 巡检会建隧道，也就是会改系统网络 —— 非 Debian 直接拒绝。
 	if _, ok := system.DebianVersion(); !ok {
-		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyWatchNotDebian, system.PrettyName()))
+		a.log.Errorf("%s", msg.Tf(msg.KeyWatchNotDebian, system.PrettyName()))
 		return exitNotDebian
 	}
 
@@ -134,7 +134,7 @@ func (a *app) cmdWatch(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyWatchStart, interval, ifName, mode))
+	a.log.Infof("%s", msg.Tf(msg.KeyWatchStart, interval, ifName, mode))
 
 	deps := keepalive.Deps{
 		Lock:  a.tryLock,
@@ -197,23 +197,23 @@ func (a *app) watchRebuild(ctx context.Context, opt ensureOptions) (string, erro
 func (a *app) watchLog(ev keepalive.Event, args ...any) {
 	switch ev {
 	case keepalive.EvRoundStart:
-		a.log.Debugf("%s", a.bundle.Tf(i18n.KeyWatchRound, args...))
+		a.log.Debugf("%s", msg.Tf(msg.KeyWatchRound, args...))
 	case keepalive.EvHealthy:
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyWatchHealthy, args...))
+		a.log.Infof("%s", msg.Tf(msg.KeyWatchHealthy, args...))
 	case keepalive.EvUnhealthy:
-		a.log.Warnf("%s", a.bundle.Tf(i18n.KeyWatchUnhealthy, args...))
+		a.log.Warnf("%s", msg.Tf(msg.KeyWatchUnhealthy, args...))
 	case keepalive.EvRebuilding:
-		a.log.Warnf("%s", a.bundle.T(i18n.KeyWatchRebuilding))
+		a.log.Warnf("%s", msg.T(msg.KeyWatchRebuilding))
 	case keepalive.EvRebuilt:
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyWatchRebuilt, args...))
+		a.log.Infof("%s", msg.Tf(msg.KeyWatchRebuilt, args...))
 	case keepalive.EvRebuildFailed:
-		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyWatchFailed, args...))
+		a.log.Errorf("%s", msg.Tf(msg.KeyWatchFailed, args...))
 	case keepalive.EvLocked:
 		// 锁被占的提示已由 tryLock 给出，这里只留一条时间线。
-		a.log.Debugf("%s", a.bundle.Tf(i18n.KeyWatchLocked, args...))
+		a.log.Debugf("%s", msg.Tf(msg.KeyWatchLocked, args...))
 	case keepalive.EvStopped:
 		sum, _ := args[0].(keepalive.Summary)
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyWatchStopped,
+		a.log.Infof("%s", msg.Tf(msg.KeyWatchStopped,
 			sum.Rounds, sum.Healthy, sum.Rebuilt, sum.Failed, sum.Skipped))
 	}
 }

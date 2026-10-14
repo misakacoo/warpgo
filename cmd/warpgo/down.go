@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/state"
@@ -17,7 +17,7 @@ func (a *app) cmdDown(args []string) int {
 		keepWatch bool
 	)
 	opts := newOptionSet().Str("--ifname", &ifName).Bool("--keep-watch", &keepWatch)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
@@ -51,7 +51,7 @@ func (a *app) cmdDown(args []string) int {
 		}
 	}
 
-	a.log.Infof("%s", a.bundle.T(i18n.KeyDownStart))
+	a.log.Infof("%s", msg.T(msg.KeyDownStart))
 
 	// 顺序很重要：**先清规则与路由，再删接口**。
 	//
@@ -91,18 +91,18 @@ func (a *app) cmdDown(args []string) int {
 	if restored, derr := a.restoreDNS(); derr != nil {
 		a.log.Warnf("%v", derr)
 	} else if !restored {
-		a.log.Debugf("%s", a.bundle.T(i18n.KeyUninstallNoDNS))
+		a.log.Debugf("%s", msg.T(msg.KeyUninstallNoDNS))
 	}
 
 	if len(res.RulesRemoved) == 0 && res.RoutesFlushed == 0 && !deleted {
-		a.log.Infof("%s", a.bundle.T(i18n.KeyDownNothing))
+		a.log.Infof("%s", msg.T(msg.KeyDownNothing))
 		return exitOK
 	}
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyDownSummary, len(res.RulesRemoved), res.RoutesFlushed))
+	a.log.Infof("%s", msg.Tf(msg.KeyDownSummary, len(res.RulesRemoved), res.RoutesFlushed))
 	if deleted {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyNetDeletedLink, name))
+		a.log.Infof("%s", msg.Tf(msg.KeyNetDeletedLink, name))
 	}
-	a.log.Infof("%s", a.bundle.T(i18n.KeyDownDone))
+	a.log.Infof("%s", msg.T(msg.KeyDownDone))
 	return exitOK
 }
 
@@ -124,7 +124,7 @@ func (a *app) stopWatchService(ctx context.Context) {
 		if err := mgr.Stop(ctx); err != nil {
 			a.log.Warnf("%v", err)
 		} else {
-			a.log.Infof("%s", a.bundle.Tf(i18n.KeyDownWatchStopped, systemd.UnitName))
+			a.log.Infof("%s", msg.Tf(msg.KeyDownWatchStopped, systemd.UnitName))
 		}
 	}
 	if err := mgr.ResetFailed(ctx); err != nil {

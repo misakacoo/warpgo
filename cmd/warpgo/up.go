@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/system"
@@ -35,7 +35,7 @@ func (a *app) cmdUp(args []string) int {
 		Bool("--force", &force).
 		Bool("--no-confirm", &noConfirm).
 		Str("--guard-timeout", &guardTimeoutStr)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
@@ -58,7 +58,7 @@ func (a *app) cmdUp(args []string) int {
 
 	// 建隧道会改系统网络，非 Debian 直接拒绝。
 	if _, ok := system.DebianVersion(); !ok {
-		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyUpNotDebian, system.PrettyName()))
+		a.log.Errorf("%s", msg.Tf(msg.KeyUpNotDebian, system.PrettyName()))
 		return exitNotDebian
 	}
 

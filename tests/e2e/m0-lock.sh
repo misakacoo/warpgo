@@ -64,7 +64,7 @@ if kill -0 "$FAKE" 2>/dev/null; then
 else
   ok "旧持锁者已被终止"
 fi
-case "$out3" in *"接管"* | *"taking the lock over"*) ok "日志说明了接管原因" ;; *) bad "日志没说明接管原因" ;; esac
+case "$out3" in *"接管"*) ok "日志说明了接管原因" ;; *) bad "日志没说明接管原因" ;; esac
 
 echo
 echo "== 4. 停跳但身份不明 → 只接管、绝不误杀 =="

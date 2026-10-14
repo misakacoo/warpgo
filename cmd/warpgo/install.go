@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/misakacoo/warpgo/internal/i18n"
+	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/keepalive"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/system"
@@ -41,13 +41,13 @@ func (a *app) cmdInstall(args []string) int {
 		Str("--endpoint", &endpoint).
 		Str("--dns", &dnsStr).
 		Bool("--no-start", &noStart)
-	if err := opts.parse(args, a.bundle.Tf); err != nil {
+	if err := opts.parse(args); err != nil {
 		return a.fail(err)
 	}
 
 	// 装的是"以后会自动改系统网络"的东西，非 Debian 直接拒绝。
 	if _, ok := system.DebianVersion(); !ok {
-		a.log.Errorf("%s", a.bundle.Tf(i18n.KeyInstallNotDebian, system.PrettyName()))
+		a.log.Errorf("%s", msg.Tf(msg.KeyInstallNotDebian, system.PrettyName()))
 		return exitNotDebian
 	}
 
@@ -87,9 +87,9 @@ func (a *app) cmdInstall(args []string) int {
 		return a.fail(err)
 	}
 	if installed {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyInstallBinary, exe, mgr.BinPath()))
+		a.log.Infof("%s", msg.Tf(msg.KeyInstallBinary, exe, mgr.BinPath()))
 	} else {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyInstallBinarySame, mgr.BinPath()))
+		a.log.Infof("%s", msg.Tf(msg.KeyInstallBinarySame, mgr.BinPath()))
 	}
 
 	// 2. 单元
@@ -107,12 +107,11 @@ func (a *app) cmdInstall(args []string) int {
 	content := systemd.Render(systemd.UnitParams{
 		BinPath:   mgr.BinPath(),
 		ExecStart: execArgs,
-		Lang:      string(a.bundle.Lang()),
 	})
 	if err := mgr.WriteUnit(content); err != nil {
 		return a.fail(err)
 	}
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyInstallUnit, mgr.UnitPath()))
+	a.log.Infof("%s", msg.Tf(msg.KeyInstallUnit, mgr.UnitPath()))
 
 	ctx, cancel := context.WithTimeout(context.Background(), upTimeout)
 	defer cancel()
@@ -123,19 +122,19 @@ func (a *app) cmdInstall(args []string) int {
 	if err := mgr.Enable(ctx); err != nil {
 		return a.fail(err)
 	}
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyInstallEnabled, systemd.UnitName))
+	a.log.Infof("%s", msg.Tf(msg.KeyInstallEnabled, systemd.UnitName))
 
 	if noStart {
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyInstallNoStart, systemd.UnitName))
+		a.log.Infof("%s", msg.Tf(msg.KeyInstallNoStart, systemd.UnitName))
 	} else {
 		// 用 restart 而不是 start：重装时参数可能变了，restart 才能让新参数生效。
 		if err := mgr.Restart(ctx); err != nil {
 			return a.fail(err)
 		}
-		a.log.Infof("%s", a.bundle.Tf(i18n.KeyInstallStarted, systemd.UnitName))
+		a.log.Infof("%s", msg.Tf(msg.KeyInstallStarted, systemd.UnitName))
 	}
 
-	a.log.Infof("%s", a.bundle.Tf(i18n.KeyInstallDone, systemd.UnitName, interval))
+	a.log.Infof("%s", msg.Tf(msg.KeyInstallDone, systemd.UnitName, interval))
 	return exitOK
 }
 
@@ -214,7 +213,7 @@ func (a *app) purgeStateDir(dir string) (removed []string, err error) {
 	}
 	if len(unknown) > 0 {
 		return nil, fmt.Errorf("%s",
-			a.bundle.Tf(i18n.KeyPurgeRefused, dir, strings.Join(unknown, ", ")))
+			msg.Tf(msg.KeyPurgeRefused, dir, strings.Join(unknown, ", ")))
 	}
 
 	for _, e := range entries {

@@ -26,13 +26,6 @@ RESOLV_BAK=$ETC/resolv.conf.origin
 [ -x "$BIN" ] || { echo "找不到可执行文件: $BIN"; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "需要 root"; exit 1; }
 
-# 把语言钉死。
-#
-# 上一轮（M3）在这里栽过一次：脚本 grep 中文"自检"，而 VPS 的 LANG 是 C，
-# 程序输出英文，于是断言假失败。**验收脚本不该假设被测程序的输出语言** ——
-# 与其写"中英都认"的正则，不如直接把语言固定下来，让断言是确定的。
-export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-
 pass=0
 fail=0
 ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; pass=$((pass + 1)); }
@@ -120,7 +113,7 @@ done
                  || bad "健康巡检改动了系统状态"
 
 # 日志必须明确说"没动"，而不是含糊过去。
-"$BIN" watch --once 2>&1 | grep -qiE 'left untouched|未做任何改动' \
+"$BIN" watch --once 2>&1 | grep -q '未做任何改动' \
   && ok "日志明确说明「未做任何改动」" || bad "日志没说清这一轮做了什么"
 
 # ─────────────────────────────────────────────────────────────
@@ -130,7 +123,7 @@ printf '%s\n' "$out" | sed 's/^/    /'
 [ "$rc" -eq 0 ] && ok "循环退出码 0" || bad "循环退出码 $rc"
 c=$(iface_ctime)
 [ "$c" = "$BASE_CTIME" ] && ok "循环跑完接口仍未被重建" || bad "循环期间接口被重建（$BASE_CTIME -> $c）"
-printf '%s' "$out" | grep -qiE 'keepalive stopped|巡检结束' \
+printf '%s' "$out" | grep -q '巡检结束' \
   && ok "结束时给出了汇总（journal 里能看到这一轮到底做了什么）" || bad "缺少结束汇总"
 
 # ─────────────────────────────────────────────────────────────
@@ -166,7 +159,7 @@ note "当前经接口: $(trace_via_iface)$(printf '')"
 
 out=$(timeout 120 "$BIN" watch --once --endpoint 192.0.2.1:2408 2>&1); rc=$?
 printf '%s\n' "$out" | sed 's/^/    /'
-printf '%s' "$out" | grep -qiE 'hard-reset|硬复位' \
+printf '%s' "$out" | grep -q '硬复位' \
   && ok "识别出「配置没变但链路不通」并做了硬复位" \
   || bad "没有走硬复位分支 —— 这种情况会永远修不好"
 now=$(iface_ctime)
@@ -191,8 +184,8 @@ printf '%s\n' "$out" | sed 's/^/    /'
 [ "$rc" -eq 2 ] && ok "退出码 2（不健康）—— 没有假装成功" \
                 || bad "退出码 $rc：被挡住时不该报告成功"
 # 断言"报告了跳过"，而不是"日志里出现了某个词" ——
-# 前者是结构性事实，后者会随文案微调而碎（上一轮就是栽在这上面）。
-printf '%s' "$out" | grep -q 'skipped 1' \
+# 前者是结构性事实，后者会随文案微调而碎。
+printf '%s' "$out" | grep -q '跳过 1' \
   && ok "汇总里明确记了「本轮被跳过」（没有含糊过去）" \
   || bad "汇总没有体现跳过 —— 那样用户会以为巡检定过了一切正常"
 c=$(iface_ctime)
@@ -209,7 +202,7 @@ note "锁文件内容: $(cat /run/warpgo/net.lock)（只有 PID，没有心跳 �
 out=$(timeout 60 "$BIN" watch --once 2>&1); rc=$?
 printf '%s\n' "$out" | sed 's/^/    /'
 [ "$rc" -eq 0 ] && ok "旧格式锁被接管，本轮正常完成" || bad "退出码 $rc：被遗留锁卡住了"
-printf '%s' "$out" | grep -qiE 'leftover lock|遗留|旧版本' && ok "日志说明了这是旧格式遗留锁" || bad "未提示旧格式锁"
+printf '%s' "$out" | grep -q '旧版本遗留' && ok "日志说明了这是旧格式遗留锁" || bad "未提示旧格式锁"
 kill -0 "$INNOCENT" 2>/dev/null && ok "无辜进程未被误杀（PID $INNOCENT 仍在）" || bad "无辜进程被杀了！"
 kill "$INNOCENT" 2>/dev/null
 [ -e /run/warpgo/net.lock ] && bad "锁未释放" || ok "锁已释放"
@@ -234,7 +227,7 @@ grep -q "ExecStop" "$UNIT" && bad "不该有 ExecStop（它失败会把单元标
 
 # 服务真的在干活：journal 里应当有一轮健康记录。
 sleep 3
-if journalctl -u "$UNIT_NAME" --since "-2min" --no-pager 2>/dev/null | grep -qiE 'healthy|正常'; then
+if journalctl -u "$UNIT_NAME" --since "-2min" --no-pager 2>/dev/null | grep -q '链路正常'; then
   ok "journal 里有巡检记录（服务确实在跑）"
 else
   note "journal 尚未出现巡检记录（首轮可能还在探测），继续"
@@ -296,7 +289,7 @@ RESTORED_SHA=$(sha256sum "$RESOLV" | cut -d' ' -f1)
 
 if [ "$PRE_ACCOUNT" = yes ]; then
   [ -e "$ETC/account.json" ] && ok "账户被保留（默认行为：它是身份，删掉就换 IP）" || bad "账户被删了"
-  printf '%s' "$out" | grep -qiE 'kept|保留' && ok "日志说明了账户被保留并提示 --purge" || bad "日志没说明账户去向"
+  printf '%s' "$out" | grep -q '已保留' && ok "日志说明了账户被保留并提示 --purge" || bad "日志没说明账户去向"
 fi
 systemctl list-units --all 2>/dev/null | grep -q "$UNIT_NAME" && bad "systemd 里仍有单元记录" || ok "systemd 中已无该单元"
 
@@ -318,7 +311,7 @@ printf 'do not delete me\n' > "$TMPETC/important.txt"
 WARPGO_ETC="$TMPETC" "$BIN" uninstall --purge >/tmp/m4-purge2.log 2>&1
 [ -e "$TMPETC/important.txt" ] && ok "★ 有陌生文件时拒绝清理（保护了用户的东西）" || bad "★ 把用户文件删了！"
 [ -e "$TMPETC/account.json" ] && ok "整个目录被跳过，一个文件都没删" || bad "部分删除 —— 那更糟"
-grep -qiE 'refus|拒绝' /tmp/m4-purge2.log && ok "日志说明了拒绝原因" || note "日志措辞未匹配（不影响结论）"
+grep -q '拒绝' /tmp/m4-purge2.log && ok "日志说明了拒绝原因" || note "日志措辞未匹配（不影响结论）"
 rm -rf "$TMPETC"
 
 # ─────────────────────────────────────────────────────────────
