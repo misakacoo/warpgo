@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"syscall"
 	"time"
@@ -85,6 +86,13 @@ type Options struct {
 	// 又不担心切断 SSH 的原因。
 	Interface string
 
+	// Proxy 非空时经该代理访问（形如 socks5h://127.0.0.1:40000）。
+	//
+	// 它与 Interface 是两种完全不同的"经 WARP 出去"：WireProxy 那条路不起接口、
+	// 不碰路由，只在用户态把流量转发到 WARP 对端。探测它是唯一能证明
+	// "这条链路真的通"的方式 —— 端口在听只能说明进程活着。
+	Proxy string
+
 	// Timeout 是单次探测的总超时。
 	Timeout time.Duration
 
@@ -109,7 +117,10 @@ func Probe(ctx context.Context, family int, opt Options) (Result, error) {
 	}
 	client := opt.Client
 	if client == nil {
-		client = newClient(opt.Interface, timeout)
+		var err error
+		if client, err = newClient(opt.Interface, opt.Proxy, timeout); err != nil {
+			return Result{Family: family}, err
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, TraceURL(family), nil)
@@ -180,7 +191,7 @@ func ParseTrace(body string) Result {
 	return r
 }
 
-func newClient(ifName string, timeout time.Duration) *http.Client {
+func newClient(ifName, proxyURL string, timeout time.Duration) (*http.Client, error) {
 	dialer := &net.Dialer{Timeout: timeout}
 	if ifName != "" {
 		dialer.Control = BindToDevice(ifName)
@@ -191,7 +202,17 @@ func newClient(ifName string, timeout time.Duration) *http.Client {
 		// 探测是一次性的：不复用连接，避免拿到上一次的陈旧状态。
 		DisableKeepAlives: true,
 	}
-	return &http.Client{Timeout: timeout, Transport: tr}
+	if proxyURL != "" {
+		u, err := url.Parse(proxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("解析代理地址 %q: %w", proxyURL, err)
+		}
+		// socks5 / socks5h 在 Go 里都走"把域名交给代理解析"这条路
+		// （net/http 用 x/net/proxy 的 SOCKS5 拨号器，它发送的是域名）。
+		// 写 socks5h 是为了与 curl 的习惯对齐、也让意思更明确。
+		tr.Proxy = http.ProxyURL(u)
+	}
+	return &http.Client{Timeout: timeout, Transport: tr}, nil
 }
 
 // BindToDevice 返回一个把 socket 绑到指定网络接口的 Control 函数。

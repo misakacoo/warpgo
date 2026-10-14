@@ -8,6 +8,7 @@ import (
 	"github.com/misakacoo/warpgo/internal/dns"
 	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
+	"github.com/misakacoo/warpgo/internal/proxy"
 	"github.com/misakacoo/warpgo/internal/rollback"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/systemd"
@@ -17,10 +18,12 @@ import (
 //
 // `--purge` 只删这些，出现别的一律拒绝 —— 见 purgeStateDir 的说明。
 var knownStateFiles = map[string]bool{
-	state.AccountFile:  true,
-	state.RuntimeFile:  true,
-	dns.BackupFileName: true,
-	dns.MetaFileName:   true,
+	state.AccountFile:   true,
+	state.RuntimeFile:   true,
+	dns.BackupFileName:  true,
+	dns.MetaFileName:    true,
+	proxy.ConfFileName:  true, // WireProxy 的配置（里面有私钥）
+	proxy.StateFileName: true, // WireProxy 的安装状态
 	// 预留：将来加用户可编辑的默认值文件时不用再改这里。
 	"warpgo.toml": true,
 }
@@ -125,7 +128,21 @@ func (a *app) cmdUninstall(args []string) int {
 		a.log.Debugf("%s", msg.T(msg.KeyUninstallNoDNS))
 	}
 
-	// ④ 删二进制。
+	// ④ 撤销 WireProxy（菜单 w 装的那套）。
+	//
+	// 必须排在删状态目录之前：它的配置与状态就在那里；也必须在删 warpgo 二进制之前
+	// —— 顺序反了不会出错，但"卸载到一半发现二进制没了"会让排查的人以为是自己搞混了。
+	// 这里的失败只警告：它是独立的另一套东西，不该让隧道侧的卸载跟着失败。
+	if pRemoved, pWarn := proxy.New().Remove(ctx, false); len(pRemoved) > 0 || pWarn != nil {
+		if pWarn != nil {
+			a.log.Warnf("%v", pWarn)
+		}
+		a.log.Infof("%s", msg.T(msg.KeyUninstallProxy))
+	} else {
+		a.log.Debugf("%s", msg.T(msg.KeyProxyNotInstalled))
+	}
+
+	// ⑤ 删二进制。
 	if keepBinary {
 		a.log.Infof("%s", msg.Tf(msg.KeyUninstallKeptBinary, mgr.BinPath()))
 	} else if err := os.Remove(mgr.BinPath()); err != nil {
@@ -138,12 +155,12 @@ func (a *app) cmdUninstall(args []string) int {
 		a.log.Infof("%s", msg.Tf(msg.KeyUninstallBinaryRemoved, mgr.BinPath()))
 	}
 
-	// ⑤ 运行时目录。
+	// ⑥ 运行时目录。
 	if err := os.RemoveAll(rollback.RunDir()); err != nil {
 		a.log.Warnf("%v", err)
 	}
 
-	// ⑥ 状态目录。默认保留账户 —— 它是一个身份，删掉就意味着下次注册会拿到
+	// ⑦ 状态目录。默认保留账户 —— 它是一个身份，删掉就意味着下次注册会拿到
 	//    一个新的 WARP 出口地址。这种事必须由用户明确要求。
 	if purge {
 		removed, err := a.purgeStateDir(state.Dir())

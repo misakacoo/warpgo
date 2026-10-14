@@ -10,23 +10,27 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 
 ## 状态
 
-按里程碑推进。当前：**M5 完成（用户态后端 + reserved + 换 IP + 在线互换）**
+按里程碑推进。当前：**M7 完成（栈优先级 + WireProxy）**
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M0 | 骨架、单实例锁、文案、日志 | ✅ 完成 |
 | M1 | 注册 / reserved / profile 生成 | ✅ 完成（真机 39/39） |
 | M2 | 内核后端 + 非全局出口 + up/down/status | ✅ 完成（真机 38/38） |
-| M3 | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ 完成（真机 32/32） |
+| M3 | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ 完成（真机 34/34） |
 | M4 | 体检 + 保活 + systemd + 卸载 | ✅ 完成（真机 69/69） |
 | M5 | 用户态后端（reserved）+ rotate 换 IP + switch 在线互换 | ✅ 完成（真机 73/73） |
-| M6 | 栈优先级 + iptables/dnsmasq/ipset 分流 | 未开始 |
-| M7 | WireProxy | 未开始 |
-| M8 | 官方 Linux Client（c/l/r/z/x） | 未开始 |
+| M6 | 地址族优先级（菜单 s） | ✅ 完成（真机 30/30） |
+| M7 | WireProxy（菜单 w / y）—— 本地 socks5 出口 | ✅ 完成（真机 84/84） |
+| M8 | 官方 Linux Client（c/l/r/z/x）+ 交互菜单 | 未开始 |
 | M9 | BBR + 版本自更新 + 打包 | 未开始 |
 
-> 账户 / license / 设备管理（WARP+ 绑定、设备列表、改名、注销）**不做** ——
-> `warpgo account` 只保留一个纯本地只读视图。
+**明确不做**（见 [docs/DESIGN.md](docs/DESIGN.md) §3）：
+
+- 账户 / license / 设备管理（WARP+ 绑定、设备列表、改名、注销）—— `warpgo account` 只留一个纯本地只读视图
+- `e` 分流（iptables + dnsmasq + ipset）
+- **运行次数统计**：不做远程上报，**也不做本地计数**。除了你显式要求的那几条路
+  （`version --check`、`rotate`、`proxy install` 的下载），warpgo 不会主动联外网
 
 ## 用法（M1 已可用）
 
@@ -180,6 +184,63 @@ sudo ./dist/warpgo switch --mode global         # 菜单 g：全局 ↔ 非全�
 若保活服务已经装好，`switch` 会**同步改写它的启动参数并重启** ——
 否则它下一轮就按旧参数把隧道重建回去，你会以为 `switch` 没生效。
 
+## 地址族优先级（M6 已可用，菜单 s）
+
+同一台机器同时有 IPv4 与 IPv6 出口时，访问双栈域名先走哪一族由 glibc 决定，
+`/etc/gai.conf` 可以影响它：
+
+```bash
+sudo ./dist/warpgo priority        # 看当前状态 + 实测的解析顺序
+sudo ./dist/warpgo priority 4      # IPv4 优先
+sudo ./dist/warpgo priority 6      # IPv6 优先
+sudo ./dist/warpgo priority d      # 回到系统默认（= 移除我们写的那两行）
+```
+
+真机实测（Debian 12 / glibc 2.36）有个值得知道的事实：
+
+| 状态 | `getent ahosts www.cloudflare.com` 的第一条 |
+|---|---|
+| 系统默认 | IPv6 |
+| `4` | IPv4 —— **真的生效** |
+| `6` | IPv6 —— **与默认完全一样** |
+
+也就是说 `4` 才是那个真正的开关：`6` 之所以"也是 IPv6 优先"，是因为 glibc 的默认
+本来就是 IPv6 优先；`priority 6` 真正起作用的一步是**把 IPv4 优先那行删掉**
+（万一机器上有别的工具写过它）。`priority` 命令会如实告诉你这一点，不假装对称。
+
+实现上只增删 `/etc/gai.conf` 里那两行，其余内容（包括 glibc 自带的那行被注释掉的
+v4 写法）逐字节保留 —— 所以 `d` 能把你进去时的文件原样还回来，不需要任何备份文件。
+
+`priority` 无参数时会用 `getent ahosts` **实测**一次解析顺序：只看文件里有没有那行
+是不够的（一个什么都没做的实现也能让文件"看起来对"），而 **Go 自己的解析器不读
+gai.conf**，用它去测会得出"gai.conf 无效"的错误结论。
+
+## WireProxy：把 WARP 做成一个本地 socks5（M7 已可用，菜单 w / y）
+
+```bash
+sudo ./dist/warpgo proxy install              # 下载 + 校验 + 生成配置 + 装成服务
+sudo ./dist/warpgo proxy install --port 25344 # 换端口（默认 40000）
+sudo ./dist/warpgo proxy on | off             # 开关
+sudo ./dist/warpgo proxy status [--json]      # 看状态（会经 socks5 实测一次）
+
+curl -x socks5h://127.0.0.1:40000 https://1.1.1.1/cdn-cgi/trace | grep warp   # warp=on
+```
+
+它和隧道模式是**两条不同的路**：不起网络接口、不碰路由，只在用户态跑一个小的
+wireguard 客户端，把 socks5 挂在 **127.0.0.1**（不对外暴露）。
+"哪些流量走 WARP"由你自己决定 —— 浏览器、`curl -x`、程序里的代理设置。
+
+几个刻意的做法：
+
+- **版本默认钉死**（`v1.1.3`），不追 latest —— 装上去的是 root 运行的可执行文件，可复现优先。
+- **校验和强制**：从发布页取 `checksums.txt` 比对；取不到就报错，并给出两条出路
+  （`--sha256` / `--from` 离线安装），**不静默降级成不校验**。
+  发布仓库是 `windtf/wireproxy`（上游 `pufferffish` 已迁移到那里）。
+- 装完先 `wireproxy -n -c` 自检配置，再启动服务，最后**经 socks5 实测** `warp=on` 才算成功。
+- **reserved 在这里发不出去**（wireproxy 用的是官方 wireguard-go）。账户带 reserved 时
+  会明确警告 —— 需要 reserved 的地区请改用隧道模式：`warpgo switch --backend userspace`。
+- `warpgo uninstall` 会一并撤掉它；`proxy uninstall --keep-binary` 可以留下那个二进制。
+
 ## 卸载（M4 已可用）
 
 ```bash
@@ -226,12 +287,21 @@ tests/e2e/m2-updown.sh                 # M2 真机验收（幂等 / 零残留 / 
 tests/e2e/m3-global.sh                 # M3 真机验收（全局 + 回滚，34 项）
 tests/e2e/m4-watch.sh                  # M4 真机验收（保活 + systemd + 卸载，69 项）
 tests/e2e/m5-userspace.sh              # M5 真机验收（用户态后端 + 抓包验 reserved + 换 IP，73 项）
+tests/e2e/m6-priority.sh               # M6 真机验收（gai.conf 三态 + getent 实测顺序，30 项）
+tests/e2e/m7-proxy.sh                  # M7 真机验收（真实下载 + socks5 实测 + 零残留，84 项）
 ```
 
 `m5-userspace.sh` 会**真的在两套后端之间来回切换**、**真的重新注册一个新账户**
 （所以这台机器的 WARP 出口地址会变、旧设备会被从服务端注销），
 并且用 `tcpdump` 抓包来断言"报文的类型字段里到底带了什么字节" ——
 这是唯一能证明 reserved 真的生效/没生效的办法（见上面那段）。
+
+`m7-proxy.sh` 会**真的从 GitHub 下载 4MB 的第三方二进制**、真的装 systemd 单元、
+真的起进程，并且每条连通性断言都是**另起一条 `curl --proxy socks5h://…`** ——
+不看被测程序自己的结论。
+
+`m6-priority.sh` 会真的改 `/etc/gai.conf`，结束时按 sha256 逐字节还原；
+它用 `getent ahosts` 验效果，因为那才是用户实际会遇到的解析路径。
 
 真机验收脚本会**动真实的网络与 systemd**，所以它们都自带 trap 兜底，
 并且建议用 `setsid` 在后台跑、再挂一个"死人开关"（M3 那个脚本还会**故意断网几秒** ——

@@ -147,6 +147,12 @@ func ExecRunner(ctx context.Context, name string, args ...string) (string, int, 
 
 // Manager 管理这个单元。
 type Manager struct {
+	// Name 是单元名；留空则用 UnitName（保活单元）。
+	//
+	// 它是后加的：M7 的 WireProxy 也是一个 systemd 单元，而 systemctl 的那几个动作
+	// （enable / start / is-active …）与单元名无关。与其在 proxy 包里重抄一遍，
+	// 不如让这里能指定名字 —— 一套代码管一个单元，出错的地方就少一处。
+	Name string
 	// Paths 是安装位置；零值时用默认值。
 	Paths Paths
 	// Runner 可注入（测试用）。
@@ -166,6 +172,17 @@ func (m *Manager) paths() Paths {
 	}
 	return p
 }
+
+// name 返回要操作的单元名。
+func (m *Manager) name() string {
+	if strings.TrimSpace(m.Name) != "" {
+		return m.Name
+	}
+	return UnitName
+}
+
+// Name 返回这个 Manager 管理的单元名（日志用）。
+func (m *Manager) UnitName() string { return m.name() }
 
 // UnitPath 返回单元文件路径。
 func (m *Manager) UnitPath() string { return m.paths().UnitPath }
@@ -249,35 +266,35 @@ func (m *Manager) DaemonReload(ctx context.Context) error {
 }
 
 // Enable 设置开机自启。
-func (m *Manager) Enable(ctx context.Context) error { return m.must(ctx, "启用", "enable", UnitName) }
+func (m *Manager) Enable(ctx context.Context) error { return m.must(ctx, "启用", "enable", m.name()) }
 
 // Disable 取消开机自启。
 func (m *Manager) Disable(ctx context.Context) error {
-	return m.must(ctx, "禁用", "disable", UnitName)
+	return m.must(ctx, "禁用", "disable", m.name())
 }
 
 // Start 启动。
-func (m *Manager) Start(ctx context.Context) error { return m.must(ctx, "启动", "start", UnitName) }
+func (m *Manager) Start(ctx context.Context) error { return m.must(ctx, "启动", "start", m.name()) }
 
 // Restart 重启（也用于"参数改了要生效"）。
 func (m *Manager) Restart(ctx context.Context) error {
-	return m.must(ctx, "重启", "restart", UnitName)
+	return m.must(ctx, "重启", "restart", m.name())
 }
 
 // Stop 停止。
-func (m *Manager) Stop(ctx context.Context) error { return m.must(ctx, "停止", "stop", UnitName) }
+func (m *Manager) Stop(ctx context.Context) error { return m.must(ctx, "停止", "stop", m.name()) }
 
 // ResetFailed 清掉 failed 计数。
 //
 // 这一步是必须的：单元一旦被标成 failed，restart 就退化成"只重启不重载"，
 // 后续行为会变得难以推理。`down` / `uninstall` 之后都要清一次。
 func (m *Manager) ResetFailed(ctx context.Context) error {
-	return m.must(ctx, "清除失败状态", "reset-failed", UnitName)
+	return m.must(ctx, "清除失败状态", "reset-failed", m.name())
 }
 
 // IsActive 报告单元是否在运行。
 func (m *Manager) IsActive(ctx context.Context) (bool, error) {
-	out, code, err := m.systemctl(ctx, "is-active", UnitName)
+	out, code, err := m.systemctl(ctx, "is-active", m.name())
 	if err != nil {
 		return false, fmt.Errorf("执行 systemctl is-active: %w", err)
 	}
@@ -287,7 +304,7 @@ func (m *Manager) IsActive(ctx context.Context) (bool, error) {
 
 // IsEnabled 报告单元是否开机自启。
 func (m *Manager) IsEnabled(ctx context.Context) (bool, error) {
-	_, code, err := m.systemctl(ctx, "is-enabled", UnitName)
+	_, code, err := m.systemctl(ctx, "is-enabled", m.name())
 	if err != nil {
 		return false, fmt.Errorf("执行 systemctl is-enabled: %w", err)
 	}

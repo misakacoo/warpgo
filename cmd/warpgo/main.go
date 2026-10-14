@@ -73,6 +73,10 @@ func run(args []string) int {
 		return a.cmdRotate(cmdArgs)
 	case "switch":
 		return a.cmdSwitch(cmdArgs)
+	case "priority":
+		return a.cmdPriority(cmdArgs)
+	case "proxy":
+		return a.cmdProxy(cmdArgs)
 	case "watch":
 		return a.cmdWatch(cmdArgs)
 	case "install":

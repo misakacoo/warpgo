@@ -6,7 +6,7 @@
 > 不适配 Docker、macOS、路由器（OpenWrt）等平台。
 >
 > - 仓库：`C://Users//momo//Documents//GitHub//warpgo`（本文件即仓库内 `docs/DESIGN.md`，是唯一正式版本）
-> - 状态：**M5 已完成**（用户态后端 + reserved + `rotate` + `switch`）
+> - 状态：**M7 已完成**（栈优先级 + WireProxy；`e` 分流与运行次数统计已按要求砍掉）
 > - 编译 / 测试 / 调试**一律在 Debian 上进行**（见 §12）
 > - §14 有两处我方保留意见，待确认（DD 重装系统、Teams OAuth）
 
@@ -18,11 +18,14 @@
 |---|---|---|
 | 1 | **功能边界 = 全搬** | "不要其他客户端"的真实含义是**只要 Debian、不适配 Docker / macOS / 路由器**；<br>菜单里所有功能都要，**包括**官方 Linux Client（`c`/`l`/`r`）与 WireProxy（`w`/`y`） |
 | 2 | **默认模式 = 非全局** | 只对指定源地址加策略路由，天然不会切断 SSH |
-| 3 | **reserved = 一等公民** | 需要 vendor 一份打过补丁的 `wireguard-go`，需要时自动切用户态后端 |
+| 3 | **reserved = 一等公民** | 需要时自动切用户态后端；最终**没有** vendor 补丁版 wireguard-go，改为包装 `conn.Bind`（§8.2） |
 | 4 | **全新开始，不迁移旧安装** | 用户已卸载旧版；不需要"导入现有 warp.conf"模块；测试可随意 |
 | 5 | **DD 重装系统不编入**（2026-10-14 追加） | 参数错一位即机器报废，且往往在远程无 IPMI 的情况下；见 §14.1 |
-| 6 | **Teams OAuth 砍掉**（2026-10-14 追加） | 与"拿到出口"无关，约 300–500 行；`cloudflare` 只做 free / WARP+ 与设备管理；见 §14.2 |
+| 6 | **Teams OAuth 砍掉**（2026-10-14 追加） | 与"拿到出口"无关，约 300–500 行 |
 | 7 | **只保留简体中文**（2026-10-15 追加） | 移除英语与语言选择：不再按 `LANG` 推断、不再有 `--lang`；命令行 / 日志 / 菜单一律中文，见 §8.15 |
+| 8 | **账户 / license / 设备管理砍掉**（2026-10-15 追加） | WARP+ 绑定、设备列表、改名、注销都不做；`account` 只留纯本地只读视图（§8.7） |
+| 9 | **`e` 分流砍掉**（2026-10-15 追加） | iptables + dnsmasq + ipset 那一套（上游 `iptables_solution()`，129 行 + 配置）；见 §3 |
+| 10 | **运行次数统计砍掉**（2026-10-15 追加） | 上游每次运行都向 `stat.cloudflare.now.cc` 上报且无开关；warpgo **不做任何上报，也不做本地计数**；见 §8.14 |
 
 > 用户机器（Debian 12，非全局，原生 v4+v6）**已确认卸载干净** —— 见附录 A 的真机审计。
 > 该机器可作开发与真机验收的测试机，可随意安装/卸载。
@@ -39,14 +42,14 @@
 | `i` 换 IP（Netflix） | `change_ip()`（214 行） | `cloudflare` + `netcfg` | ✅ **M5** | 重新注册换出口；**不做**流媒体解锁探测（见 §8.16） |
 | `g` 全局/非全局切换 | `working_mode_switch()` | `netcfg.route` + `switch` | ✅ M3/M5 | 要连路由一起换，不是只改注释 |
 | `k` 内核↔用户态 | `kernel_reserved_switch()` | `tunnel` + `userspace` | ✅ **M5** | 同一套实现对两种后端；见 §8.2 |
-| `s 4/6/d` 栈优先级 | `stack_priority()` + `result_priority()` | `netcfg.priority` | M6 | Debian 上用 `gai.conf` + `ip rule` 优先级 |
+| `s 4/6/d` 栈优先级 | `stack_priority()` + `result_priority()` | `gai` + `cli.priority` | ✅ **M6** | 只写 `/etc/gai.conf` 里那两行；**实测** `4` 生效、`6` 与默认等价，见 §8.8 |
 | `u` 卸载 | `uninstall()`（93 行） | `cmd/uninstall.go` | ✅ **M4**（DNS 还原已实测） | 见 §8.13 的"必须还原清单" |
 | `v` 版本/同步 | `ver()` + `check_cdn()` | `cli.version` | M9 | Go 版无"同步脚本"，改为查新版本 + 可选自更新 |
 | `b` 升级内核 + BBR | `bbrInstall()` | `system.bbr` | M9 | 只做 BBR；内核升级只做"检查 + 提示" |
 | ~~`b` 里的 DD 重装系统~~ | `bbrInstall()` 内 | — | — | **已确认不编入**（§14.1） |
-| `e` 分流（iptables+dnsmasq+ipset） | `iptables_solution()`（129 行）+ 配置 | `split` | M6 | 流媒体解锁那套 |
-| `w` WireProxy 方案 | `wireproxy_solution()` | `proxy` | M7 | 引入第三方 `wireproxy` 二进制 |
-| `y` WireProxy 开关 | `wireproxy_onoff()` | `proxy` | M7 | |
+| ~~`e` 分流（iptables+dnsmasq+ipset）~~ | `iptables_solution()`（129 行）+ 配置 | — | — | **已确认砍掉**（2026-10-15，§3）：上游那段还带一个 P0 级 bug，且与"拿到出口"无关 |
+| `w` WireProxy 方案 | `wireproxy_solution()` | `proxy` | ✅ **M7** | 引入第三方 `wireproxy` 二进制（**下载 + 强制校验和**），见 §8.9 |
+| `y` WireProxy 开关 | `wireproxy_onoff()` | `proxy` | ✅ **M7** | 开之后**经 socks5 实测** warp=on 才算成功 |
 | `c` 官方 Client → socks5 | `client_install()`（137 行） | `cfclient` | M8 | 依赖 Cloudflare 官方 `.deb` |
 | `l` 官方 Client → WARP 模式 | `client_install()` | `cfclient` | M8 | |
 | `r` Client 开关 | `client_onoff()` | `cfclient` | M8 | |
@@ -56,7 +59,7 @@
 | ~~语言选择~~ | `select_language()` + 141 条文案 | `msg` | — | **中英双语已移除**（2026-10-15）：只保留简体中文，见 §8.15 |
 | 账户 / license / 设备 | `api.sh` 的 account 子命令 | — | — | **已确认砍掉**（2026-10-15）：WARP+ 绑定、设备列表、改名、注销都不做；`warpgo account` 只留一个纯本地的只读视图。唯一保留的设备管理动作是 `rotate` 内部给自己的旧设备收尾 |
 | ~~Team 令牌注册~~ | `api.sh` 的 Teams OAuth 流程 | — | — | **已确认砍掉**（§14.2） |
-| 运行次数统计 | `statistics_of_run-times()` | — | — | **建议默认关闭**远程上报（§8.14） |
+| ~~运行次数统计~~ | `statistics_of_run-times()` | — | — | **已确认砍掉**（2026-10-15，§8.14）：不做远程上报，**也不做本地计数** |
 
 ---
 
@@ -69,6 +72,13 @@
 - 纯 shell 实现（用编译产物换确定性与可观测性）
 - **Teams OAuth 令牌注册**（2026-10-14 用户确认砍掉）：与"拿到 WARP 出口"无关，约 300–500 行
 - **DD 重装系统**（2026-10-14 用户确认不编入）：见 §14.1
+- **`e` 分流（iptables + dnsmasq + ipset）**（2026-10-15 用户确认砍掉）：
+  它要同时维护 ipset 集合、dnsmasq 配置、两套 iptables 后端，而上游那份实现里还带着
+  一个 P0 级 bug（`PostUp` 加的规则与 `PostDown` 删的规则根本不是同一条）。
+- **运行次数统计**（2026-10-15 用户确认砍掉）：见 §8.14。既不做远程上报，也不做本地计数
+  —— 一个"今天运行了几次"的数字对使用者没有任何用处，而它换来的是一条"每次运行都联外网"
+  的行为。**没有遥测。**
+- **账户 / license / 设备管理**（2026-10-15 用户确认砍掉）：见 §8.7 与 §2 的对照表。
 
 ---
 
@@ -91,19 +101,19 @@
 ```
 cmd/warpgo             CLI / 菜单
    │
-   ├── cloudflare ─────── 注册、账户、license、设备、Teams
+   ├── cloudflare ─────── 注册 / 启用 / reserved（不做 license、设备列表、Teams）
    │
-   ├── tunnel ─────────── 抽象：BringUp / Status / Close / SetReserved
+   ├── tunnel ─────────── 抽象：Ensure / Status / Close / TearDown
    │      ├── kernel      （netlink 建接口 + UAPI 下发）
-   │      └── userspace   （内嵌 vendored wireguard-go device）
+   │      └── userspace   （独立进程跑官方 wireguard-go + 包装 conn.Bind 注入 reserved）
    │
    ├── netcfg ─────────── 与传输无关：地址 / MTU / DNS / 路由 / 策略路由 / 回滚
-   │      ├── split       （iptables + dnsmasq + ipset 分流）
-   │      └── proxy       （WireProxy 生成与开关）
+   ├── gai ────────────── 地址族优先级（只动 /etc/gai.conf 里那两行）
+   ├── proxy ──────────── WireProxy：下载校验、配置生成、单元与开关
    │
-   ├── cfclient ───────── 官方 Linux Client 的安装 / 模式切换 / 开关 / z·x 钩子
+   ├── cfclient ───────── 官方 Linux Client 的安装 / 模式切换 / 开关 / z·x 钩子   （M8）
    │
-   ├── health ─────────── 体检（trace，IP 字面量优先）
+   ├── health ─────────── 体检（trace，IP 字面量优先；可经接口或经 socks5）
    ├── keepalive ──────── 巡检与自愈（健康不动）
    └── state ──────────── 账户与运行态、单实例锁、卸载
 ```
@@ -151,14 +161,15 @@ warpgo/
 │   ├── system/      ✅ platform.go               # bbr.go / kernel.go / dd.go 属 M9
 │   ├── logx/        ✅ logx.go
 │   ├── version/     ✅ version.go
-│   ├── msg/         ✅ keys.go text.go             # 文案表：只有简体中文
-│   ├── split/       iptables.go dnsmasq.go ipset.go                          # M6
-│   ├── proxy/       wireproxy.go                                             # M7
+│   ├── msg/         ✅ keys.go text.go          # 文案表：只有简体中文
+│   ├── gai/         ✅ gai.go                   # /etc/gai.conf 的受管两行（M6）
+│   ├── proxy/       ✅ config.go proxy.go download.go                        # WireProxy（M7）
 │   └── cfclient/    install.go mode.go hooks.go                              # M8
 ├── docs/DESIGN.md                                # 本文件（唯一正式版）
-├── tests/e2e/       ✅ m0-lock.sh m1-register.sh m2-updown.sh m3-global.sh m4-watch.sh m5-userspace.sh
+├── tests/e2e/       ✅ m0-lock.sh m1-register.sh m2-updown.sh m3-global.sh
+│                       m4-watch.sh m5-userspace.sh m6-priority.sh m7-proxy.sh
 ├── build.sh         ✅ 产出 dist/warpgo
-└── （原计划的 third_party/wireguard-go/ 已**取消** —— 见 §8.2）
+└── （原计划的 third_party/wireguard-go/ 与 internal/split/ 都已**取消** —— 见 §8.2 与 §3）
 ```
 
 与规划的两处偏差（都已落地，在此说明而不是留成「文档与现实不符」）：
@@ -202,14 +213,14 @@ type Runtime struct {
     FWMark   uint32      `json:"fwmark"`    // 0xca6c（仅全局）
     Family   Family      `json:"family"`    // v4 | v6 | dual
     UpSince  time.Time   `json:"up_since"`
-    Split    *SplitState    `json:"split,omitempty"`
-    Proxy    *ProxyState    `json:"proxy,omitempty"`
-    CFClient *CFClientState `json:"cfclient,omitempty"`
+    CFClient *CFClientState `json:"cfclient,omitempty"`   // M8
 }
 ```
 
-存放：`/etc/warpgo/account.json`（0600）、`/etc/warpgo/runtime.json`、
-`/etc/warpgo/warpgo.toml`（用户可编辑的默认值）。
+存放：`/etc/warpgo/account.json`（0600）、`/etc/warpgo/runtime.json`；
+WireProxy 另有两份：`/etc/warpgo/proxy.conf`（0600，含私钥）与
+`/etc/warpgo/proxy.json`（安装来源与端口，见 §8.9）。
+地址族优先级**没有**状态文件 —— 它的事实来源就是 `/etc/gai.conf` 本身（§8.8）。
 
 **实现落点（M1）**：`Account` 定义在 `internal/cloudflare/account.go`，但密钥与地址存成
 字符串（base64 / CIDR）而不是定长数组与 `netip.Prefix` —— 因为 `account.json` 是要给人看、
@@ -453,23 +464,91 @@ pref 9020: not fwmark 0xca6c lookup 51820          # 两族：其余流量交给
    直接违反"断联必须能自愈"。
 3. 每轮重建前刷新心跳；旧格式（无心跳）遗留锁一律按失效处理。
 
-### 8.8 分流（`e`）
+### 8.8 地址族优先级（`s`）
 
-iptables + dnsmasq + ipset：把"需要走 WARP 的域名/IP"打进 ipset，
-再由规则把命中流量导向 warp 接口。Debian 12 默认 nftables 后端，
-实现里要同时处理 `iptables-nft` 与 legacy，**优先 nft**（Debian 12 原生）。
+同一台机器同时有 IPv4 与 IPv6 出口时，访问一个双栈域名会先走哪一族，由 glibc 的
+`getaddrinfo` 决定，而它可以被 `/etc/gai.conf` 影响。`stack_priority()` 做的就是这件事。
 
-**注意**：现有实现已发现 P0 级 bug —— 生成的 `NonGlobalUp/Down` 里
-`PostUp` 加的是 `ip -4 rule add from 172.16.0.2 …`，而 `PostDown` 删的是
-`ip -4 rule delete oif warp …`（从未添加过），导致 `wg-quick down` 返回非 0、
-systemd 中止 `restart`。新实现里所有规则必须**成对生成、由同一份数据结构派生**，
-不允许两处各写一半。
+**真机实测（Debian 12 / glibc 2.36 / getent ahosts）**：
+
+| 状态 | `getent ahosts www.cloudflare.com` 的第一条 |
+|---|---|
+| 原厂文件（两行都不写） | `2606:4700::6810:7b60`（IPv6） |
+| 加上 `precedence ::ffff:0:0/96  100` | `104.16.123.96`（IPv4） |
+| 加上 `label 2002::/16   2` | `2606:4700::6810:7b60`（IPv6，**与不写完全一样**） |
+| 两行都去掉 | `2606:4700::6810:7b60`（IPv6） |
+
+结论有三条，都写进了实现与文案里：
+
+1. **`4` 是真的开关** —— 加那一行确实把顺序改成 IPv4 优先。
+2. **`6` 不是对称的开关** —— 上游用的 `label 2002::/16   2` 在 Debian 12 上**不改变任何行为**，
+   因为 glibc 的默认表（`precedence ::/0 = 40` > `::ffff:0:0/96 = 10`）本来就是 IPv6 优先。
+   实现仍然写上那一行（与上游逐行一致、便于对照），但 `priority 6` **真正起作用的一步是
+   把 IPv4 优先那行删掉** —— 万一机器上有别的工具写过它，那一步才有意义。
+3. **`d` = 删除受管的两行** = 回到系统默认。于是"卸载时的还原"不需要任何备份文件。
+
+因此 `internal/gai` 的取舍是：
+
+- **只动自己认识的那两行**，其余内容逐字节保留（含注释与空行）。原厂文件里本来就有一行
+  **被注释掉的** v4 写法（glibc 自带的文档），识别受管行必须按分词判断、且要跳过注释，
+  否则会连它一起删掉；反过来，用 `strings.Contains` 做断言也是错的 —— 那会把注释行
+  当成生效的配置。
+- `ModeDefault` 天然是"移除我们的行"，所以 `Set` 幂等（内容一致时不写盘、mtime 不变），
+  `down` / `uninstall` 也只需要调一次 `Set(ModeDefault)`。
+- **唯一的偏差**：原文件没有结尾换行时，往返之后会补上一个（追加行时必须补换行，
+  而删掉它时无从知道那个换行是不是我们补的）。Debian 的文件本来就以换行结尾。
+
+`warpgo priority`（无参数）除了读文件，还会用 **`getent ahosts`** 实测一次解析顺序 ——
+这是唯一能回答"到底生效没有"的办法：**Go 自己的解析器不读 gai.conf**，
+用它去测这件事会得出"gai.conf 无效"的错误结论。
+
+> 原先计划放在同一节的 `e` 分流（iptables + dnsmasq + ipset）**已按用户决定砍掉**，见 §3。
 
 ### 8.9 WireProxy（`w` / `y`）
 
-- 从上游 release 下载 `wireproxy`（校验和验证），生成 `proxy.conf`（WireGuard 段 + socks5 段）。
-- 用 systemd 单元托管；`y` 就是它的开关。
-- 这引入一个**第三方二进制依赖**，需要固定版本 + 校验和。
+它和隧道模式是**两条完全不同的路**：不起网络接口、不碰路由，而是在用户态跑一个小的
+wireguard 客户端（第三方二进制 `wireproxy`），把一个 socks5 入口挂在回环地址上。
+"哪些流量走 WARP"由使用方自己决定（浏览器、`curl --proxy`、程序里的代理设置），
+而不是由系统路由决定 —— 这正是它相对隧道模式的全部价值。
+
+实现里几个刻意的决定：
+
+- **发布仓库是 `windtf/wireproxy`，不是 `pufferffish/wireproxy`**。上游已经迁移：
+  老的仓库路径会 301 到新的，而发布资产的下载地址写的都是后者。直接钉新仓库少跳一次重定向。
+- **版本默认钉死 `v1.1.3`**，不追 latest。装上去的是一个以 root 运行的可执行文件，
+  "可复现"比"总是最新"重要；要最新版写 `--version latest`（走一次 API）。
+- **校验和强制**：从同一发布页取 `checksums.txt`（`<sha256>  <文件名>` 每行一条）比对。
+  取不到就**报错**，而不是静默降级成"不校验"，并给出两条出路：`--sha256 <值>`（配合
+  `--url`）或 `--from <本地归档>`（离线安装）。
+  *已知局限*：校验和与归档来自同一个 HTTPS 主机，它挡得住"下载被截断/被缓存污染"，
+  挡不住"发布页本身被攻破"。
+- **归档只取自己认识的那个文件**：解包时只认常规文件、且一律 `filepath.Base` 取名字
+  （`wireproxy`；没有的话退而取"归档里唯一的常规文件"）。归档来自网络、落盘又是 root，
+  一个带 `../../etc/...` 的条目就能覆盖系统文件。
+- **装完先自检再启动**：`wireproxy -n -c <conf>` 是 wireproxy 自带的配置校验，白送的确定性
+  —— 与其让服务启动失败再去翻 journal，不如写盘之后立刻问一句"这份配置你自己认不认"。
+  顺便验证 `--version` 能跑（架构不对只有执行才会暴露）。
+- **配置文件放 `/etc/warpgo/proxy.conf`（0600）**，单元名 `warpgo-proxy.service`
+  —— 与上游的 `proxy.conf` / `wireproxy.service` **刻意不同**：同名会让"这台机器以前装过
+  上游脚本"的情形难以诊断，两个来源都以为自己管着同一个单元。
+- socks5 **只监听 127.0.0.1**：绑到 `0.0.0.0` 等于把一条通往 WARP 的开放代理挂到公网上。
+- **端口冲突要分清"是不是我们自己"**：重复 `install` 是很自然的动作（改参数、修现场），
+  而那时端口必然被我们自己的 wireproxy 占着。第一版只看"端口有没有人在听"，
+  于是**在装好的机器上重跑 install 必然失败** —— 那会让"重装"退化成"先手动停服务"。
+  现在只有"占用者不是我们"才拒绝（`installed && active && 端口就是当前这个` 不算冲突）。
+  这一条是真机验收逼出来的，配了一条纯函数单测（`portConflict`）。
+- `on` 之后**必须经 socks5 实测**（`health.Options.Proxy`，走 Go 的 socks5 拨号器）
+  拿到 `warp=on` 才算成功；探不通时**刻意不停服务**（WARP 对端偶尔短暂不可用，
+  wireproxy 会自己重连；停掉反而让"过一会儿就好"变成"需要人再来一次"），
+  但以退出码 2 如实报告。
+- **reserved 在这里发不出去**：wireproxy 用的是官方 wireguard-go，没有 reserved 支持。
+  账户带 reserved 时会明确警告（需要 reserved 的地区会表现为"配置都对、就是不通"），
+  并指向正确出路：`warpgo switch --backend userspace`。
+  *真机数据*：本机账户 reserved = `99,70,83`，而这个端点并不要求它 ——
+  WireProxy 实测能通（`warp=on`）。警告是**条件触发**的，不是拦路虎。
+
+`warpgo uninstall` 会一并撤掉这套东西（单元 → 二进制 → 配置/状态），
+`proxy.conf` / `proxy.json` 也在 `--purge` 的白名单里。
 
 ### 8.10 官方 Linux Client（`c` / `l` / `r` / `z` / `x`）
 
@@ -514,8 +593,13 @@ systemd 中止 `restart`。新实现里所有规则必须**成对生成、由同
 ### 8.14 版本与遥测
 
 - `v` 变成 `warpgo version --check`：查 GitHub releases 提示新版本；`--self-update` 才替换二进制（带校验和）。
-- 现有实现**每次运行都向 `stat.cloudflare.now.cc` 上报运行次数且无开关**。
-  新实现**默认不上报**，只保留本地计数；如需远程统计做成显式 opt-in。
+- **没有遥测，也没有运行次数统计**（2026-10-15 用户确认砍掉）。
+  上游实现（`statistics_of_run-times()`）在**每次运行**都向 `stat.cloudflare.now.cc/updateStats`
+  发一次请求，且没有开关；它的产物只是菜单里一句"当天运行次数: N，累计运行次数: M"。
+  这两样东西 warpgo 都不做：**不联外网、不写计数文件、不在输出里显示次数**。
+  理由很直接 —— 那个数字对使用者没有用处，而代价是"每次运行都联外网"这条行为本身。
+  唯一会联外网的是显式要求的那条路（`version --check`、`rotate`、`proxy install` 的下载）。
+  单测守着这条边界：`internal/msg` 与 `cmd` 里不允许出现任何与统计/上报相关的 key 或字符串。
 
 ### 8.15 文案（只有简体中文）
 
@@ -565,7 +649,7 @@ IP 为止。**我们只做"换一个出口"，不做解锁判定**，理由有�
 子命令（非交互优先，菜单只是它的薄封装）：
 
 ```
-warpgo menu                                   # 交互菜单（等价旧的裸 warp）—— M6
+warpgo menu                                   # 交互菜单（等价旧的裸 warp）—— M8
 warpgo register [--force] [--locale zh_CN]
 warpgo account [--json]                       # 纯本地读取，不联网
 warpgo profile [--out FILE] [--family ...] [--table-off] [--no-dns]
@@ -577,16 +661,19 @@ warpgo rotate [--attempts N] [--mode ...] [--backend ...]      # i 换 IP
 warpgo switch [--backend ...] [--mode ...]                     # k 内核↔用户态 / g 全局↔非全局
 warpgo watch [--once] [--max-rounds N] [--interval 5m] [--mode ...] [--backend ...]
 warpgo install [--interval 5m] [--mode ...] [--backend ...] [--no-start]
-warpgo uninstall [--purge] [--keep-binary]
+warpgo uninstall [--purge] [--keep-binary]     # 连 WireProxy 一起撤掉
 warpgo confirm
-warpgo priority 4|6|d              # s   —— M6
-warpgo split enable|disable|status # e   —— M6
-warpgo proxy install|on|off        # w / y —— M7
+warpgo priority [4|6|d] [--mode ...] [--host ...] [--json]     # s   —— ✅ M6
+warpgo proxy install [--port] [--version] [--url] [--sha256] [--from] [--no-start]
+warpgo proxy on|off|status [--json]                            # w / y —— ✅ M7
+warpgo proxy uninstall [--keep-binary]
 warpgo client install --mode proxy|warp | on | off    # c / l / r —— M8
 warpgo hook add|del                # z / x（隐藏，供 warp-svc 调用）—— M8
 warpgo bbr enable|disable          # b   —— M9
 warpgo version [--check] [--self-update]                —— M9
 ```
+
+> 原计划里的 `warpgo split …`（`e` 分流）**已砍掉**，见 §3。
 
 内部子命令（不进 help、不由用户调用）：
 `rollback-guard`（由 `up` 派生的回滚保险丝）、
@@ -595,6 +682,13 @@ warpgo version [--check] [--self-update]                —— M9
 **`--backend` 的取值**：`auto`（默认，见 §8.2 的三条规则）/ `kernel` / `userspace`。
 `reserved` 是 `userspace` 的别名 —— 在 WARP 语境里"带 reserved 的那个后端"
 就是用户态实现，菜单 `k` 与生态里的叫法都它。
+
+**`priority`（栈优先级，菜单 `s`）**：既接受位置参数（`priority 4`，与菜单一致）
+也接受 `--mode 4`（脚本友好）；两种写法**同时**出现时报错，不让后者悄悄盖掉前者。
+无参数时打印当前状态 + 用 `getent` 实测到的解析顺序。细节见 §8.8。
+
+**`proxy`（WireProxy，菜单 `w`/`y`）**：`install` 会真的下载并校验第三方二进制，
+`on`/`off` 是开关，`status` 报状态并**经 socks5 实测**一次。细节见 §8.9。
 
 **`rotate`（换 IP）**：重新注册一台设备，直到拿到与当前**不同的隧道地址**
 （判据是"至少一族的地址变了"，因为单栈账户只有一族），然后用新账户重建隧道、
@@ -659,10 +753,42 @@ WantedBy=multi-user.target
 | **M3** | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ **完成**（2026-10-14）：真机 **32/32** —— 见下方 |
 | **M4** | `health` + `keepalive` + systemd + **卸载** | ✅ **完成**（2026-10-14）：真机 **70/70** —— 见下方 |
 | **M5** | 用户态后端 + reserved + `rotate` + `switch` | ✅ **完成**（2026-10-15）：真机 **73/73** —— 见下方。<br>（账户 / license / 设备管理按用户决定**砍掉**，不在交付范围内） |
-| **M6** | `s` 栈优先级 + `e` 分流 | 优先级切换后 `curl -4/-6` 出口符合预期；分流开启后命中走 warp、未命中走原生；关闭后 iptables/ipset/dnsmasq 零残留 |
-| **M7** | `w` / `y` WireProxy | socks5 可用；开关后进程 / 单元 / 配置干净 |
-| **M8** | `c` / `l` / `r` 官方 Client + `z` / `x` 钩子 | 三种模式切换正确；`z`/`x` 的 ip rule 加减成对；`r` 开关后 `warp-cli status` 符合预期 |
-| **M9** | `b` BBR + 版本/自更新 + 打包 | BBR 开关与还原正确；静态二进制 + `.deb` 可装可卸；`--check` 能查到新版本 |
+| **M6** | `s` 栈优先级（`e` 分流已砍） | ✅ **完成**（2026-10-15）：真机 **30/30** —— 见下方 |
+| **M7** | `w` / `y` WireProxy | ✅ **完成**（2026-10-15）：真机 **84/84** —— 见下方 |
+| **M8** | `c` / `l` / `r` 官方 Client + `z` / `x` 钩子 + 交互菜单 | 三种模式切换正确；`z`/`x` 的 ip rule 加减成对；`r` 开关后 `warp-cli status` 符合预期 |
+| **M9** | `b` BBR + 版本/自更新 + 打包 | BBR 开关与还原正确；静态二进制可装可卸；`--check` 能查到新版本 |
+
+**M7 交付**（2026-10-15，真机 Debian 12）：
+
+- `internal/proxy`：`config.go`（配置生成与校验）、`download.go`（下载 / 校验和 / 解包 /
+  安装）、`proxy.go`（路径、单元渲染、systemctl、状态文件、撤销）。
+  设计取舍见 §8.9，其中三条是真机跑出来才算数：
+  **发布仓库是 `windtf/wireproxy`**（上游 `pufferffish` 已迁移）、
+  **`wireproxy -n -c` 可以当配置自检用**（白送的确定性）、
+  **reserved 在 WireProxy 模式下发不出去**（本机账户 reserved = `99,70,83`，
+  而这个端点不要求它 —— 实测能通；所以警告是条件触发的，不是拦路虎）。
+- `health.Options.Proxy`：探测支持经 socks5 出去（`socks5h://…`），
+  与 `Options.Interface`（绑接口）并列 —— 两种"经 WARP 出去"的形态现在都能验。
+- `systemd.Manager` 增加 `Name` 字段：一套 systemctl 动作管两个单元
+  （保活 + WireProxy），不必再抄一遍。
+- `warpgo uninstall` 会一并撤掉 WireProxy；`proxy.conf` / `proxy.json` 进 `--purge` 白名单。
+- **真机 84/84 通过**（详见 §12）：真实下载 + 校验和通过 + `wireproxy -n` 通过 +
+  单元 enabled/active + **独立 curl 经 socks5 拿到 `warp=on`（JP）** + 只监听 127.0.0.1 +
+  改端口后旧端口释放 + `off`/`on` 往返 + 撤销后零残留 + 与 `warpgo uninstall` 的联动 +
+  离线 `--from` 安装。
+
+**M6 交付**（2026-10-15，真机 Debian 12）：
+
+- `internal/gai`：只增删 `/etc/gai.conf` 里受管的两行，其余逐字节保留；
+  `ModeDefault` = 移除那两行，于是"还原"不需要备份文件、且 `Set` 天然幂等。
+- `cmd/warpgo/priority.go`：`priority [4|6|d]`；无参数时读文件 + 用 **`getent ahosts`**
+  实测解析顺序（Go 的解析器不读 gai.conf，用它测会得出错误结论）。
+  位置参数与 `--mode` 两种写法都接受，**同时出现则报错**（不让后者悄悄盖掉前者）。
+- §8.8 那三条实测结论是这一轮最重要的产出：`4` 是真开关，`6` 与默认等价，
+  `d` 可逐字节还原。上游把 `s` 做成对称的三选一，但在这台机器上它其实只有两种状态。
+- **真机 30/30 通过**：三轮切换后的 sha256 与进入时逐字节相同；`getent` 的第一条
+  确实随设置改变；注释掉的原厂行没被动过；重复设置报告"未改动"；非法取值与
+  冲突参数都被拒绝。
 
 **M5 交付**（2026-10-15，真机 Debian 12）：
 
@@ -781,6 +907,19 @@ M5 追加：`applyReserved` 的字节级断言（四种报文类型各一条，�
 `ParseBackend` / `resolveBackends` 的候选顺序、`addressesDiffer` 的判据、
 `ParseReservedArg` 命令行往返、以及 `rollback.stillPending`（保险丝该不该拉闸）。
 
+M6 追加（`internal/gai`）：`DetectContent` 的七种输入（含"多余空格""行尾注释"
+"被注释掉的写法"）、`Rewrite` 的逐字节保真（非受管行一个都不许动）、
+"原文件没有结尾换行"时的行为、`Set` 的幂等与权限保留、以及 **"注释行不是受管行"**
+—— 原厂文件里本来就有一行被注释的 v4 写法，用 `strings.Contains` 做断言会把它
+当成生效的配置（这一条是我自己先写错了测试才发现的）。
+
+M7 追加（`internal/proxy`）：`Render` 的**逐字节**固定（含 socks5 必须绑回环）、
+`Validate` 的九种缺项、`ParsePort` 与 `Port()` 的三级回退、
+`assetName` 的平台映射（含四个"没有发布产物"的平台）、`lookupSum` 的两种清单写法、
+`normalizeSHA`、tar.gz / 裸二进制 / 单文件归档 / 多文件归档（拒绝）/
+带 `../` 的条目名（只能落到目标路径）、以及用 `httptest` 假服务器跑的
+**校验和正确 / 校验和不符 / 取不到清单 / `--url` 缺 `--sha256`** 四条下载路径。
+
 ### 假实现（`tests/fake/`）
 
 - **假 netlink**：断言 ① `up` 三次后规则各 1 条 ② `down` 后完全空
@@ -788,6 +927,48 @@ M5 追加：`applyReserved` 的字节级断言（四种报文类型各一条，�
 - **假 UAPI socket**：断言握手序列、`reserved` 确实下发到用户态后端。
   （M5 之后 reserved 不再走 UAPI，而是在 `conn.Bind` 上收发出网入网报文 ——
   对应的断言改成了"假 Bind"的形式，见上。）
+- **假发布页**（M7）：`httptest` 提供 `checksums.txt` 与 `.tar.gz`，覆盖下载路径的
+  成功与三种失败；真机验收那一条则走真实的 GitHub。
+
+### M7 真机实测（2026-10-15）
+
+真机 **84/84** 通过（`tests/e2e/m7-proxy.sh`）。这个脚本会**真的从 GitHub 下载 4MB 的
+第三方二进制**、真的装 systemd 单元、真的起进程，靠 trap + 死人开关保证收尾
+（进入时先撤销已有的安装，于是每次运行都从同一个起点开始）。
+
+**怎么判"这个代理到底通不通"：另起一条 `curl --proxy socks5h://…`，不看程序自己的结论。**
+
+程序自己也会经 socks5 探一次（那是它的自检），但验收不能拿被测代码的结论当证据：
+脚本里每条连通性断言都是一条独立的 curl，直接读 trace 里的 `warp=` 字段。
+"端口在听"与"链路真的通"是两件不同的事 —— 这一点在隧道模式（M2/M4）里已经吃过亏。
+
+顺带验到的两件事：
+- `ss -nltp` 里那一行必须是 `127.0.0.1:40000`。**断言写法有两个坑**：`ss` 的输出
+  前面还有 `LISTEN / 队列 / 收发包计数`，所以模式两端都要通配（只写 `127.0.0.1:PORT*`
+  永远匹配不上）；而 `pgrep -c` 在"一个都没找到"时会**打印 0 但以 1 退出**，
+  写成 `pgrep -c ... || echo 0` 会拼出 `"0\n0"`，比较必然失败（这个坑让第一轮的
+  断言误报了两处，报出来的现象是"还有 0 个 wireproxy 进程"）。
+- `wireproxy -n -c <conf>` 真的能校验我们的配置文件（包括 `AllowedIPs` 与
+  逗号加空格的 `DNS` 列表写法）—— 这一条从"我以为格式对"变成了"工具认这份格式"。
+
+**收尾必须把隧道拉回来**：脚本里有一节专门跑 `warpgo uninstall`（验证它会一并
+撤掉 WireProxy），而 `uninstall` 本来就会拆掉隧道 —— 所以脚本结尾会重新
+`warpgo up` 并确认 `warp=on`，避免"验收把机器的网络弄没了"。
+
+### M6 真机实测（2026-10-15）
+
+真机 **30/30** 通过（`tests/e2e/m6-priority.sh`）。这个脚本会真的改 `/etc/gai.conf`，
+并在结束时还原成进入时的样子（sha256 逐字节核对）。
+
+**怎么判"优先级到底生效没有"：`getent ahosts`，不能看文件里有没有那行。**
+
+`getent` 走的是 glibc 的 `getaddrinfo`，也就是用户真正会遇到的那条路；
+而 **Go 自己的解析器不读 gai.conf**，用它去测这件事会得出"gai.conf 无效"的错误结论。
+只看文件内容的断言更糟：它会让一个"什么都没做"的实现在 `label 2002::/16 2`
+这一项上拿到绿灯（而那行实测毫无作用，见 §8.8）。
+
+因此脚本里每一轮设置都同时验两件事：文件里受管行的**条数与形态**、
+以及 **`getent` 第一条的地址族**。
 
 ### M5 真机实测（2026-10-15）
 

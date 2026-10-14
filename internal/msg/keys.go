@@ -222,6 +222,48 @@ const (
 	KeyStatusDaemon     = "status.daemon"
 	KeyStatusDaemonNone = "status.daemon_none"
 	KeyStatusResvKernel = "status.reserved_kernel_note"
+
+	// 地址族优先级（M6，菜单 s）
+	KeyPriorityTitle        = "priority.title"
+	KeyPriorityV4           = "priority.mode_v4"
+	KeyPriorityV6           = "priority.mode_v6"
+	KeyPriorityDefault      = "priority.mode_default"
+	KeyPrioritySet          = "priority.set"
+	KeyPriorityUnchanged    = "priority.unchanged"
+	KeyPriorityV6Caveat     = "priority.v6_caveat"
+	KeyPriorityHint         = "priority.hint"
+	KeyPriorityOrderV4      = "priority.order_v4"
+	KeyPriorityOrderV6      = "priority.order_v6"
+	KeyPriorityOrderUnknown = "priority.order_unknown"
+	KeyPriorityNoGetent     = "priority.no_getent"
+	KeyPriorityNotDebian    = "priority.not_debian"
+	KeyPriorityTooMany      = "priority.too_many"
+
+	// WireProxy（M7，菜单 w / y）
+	KeyProxyUsage        = "proxy.usage"
+	KeyProxyNotDebian    = "proxy.not_debian"
+	KeyProxyPortBusy     = "proxy.port_busy"
+	KeyProxyBinary       = "proxy.binary_installed"
+	KeyProxyFromLocal    = "proxy.from_local"
+	KeyProxyVersion      = "proxy.version"
+	KeyProxyConfWritten  = "proxy.conf_written"
+	KeyProxyConfigOK     = "proxy.config_ok"
+	KeyProxyEnabled      = "proxy.enabled"
+	KeyProxyStarted      = "proxy.started"
+	KeyProxyNoStart      = "proxy.no_start"
+	KeyProxyReserved     = "proxy.reserved_warning"
+	KeyProxyVerifyRetry  = "proxy.verify_retry"
+	KeyProxyOnOK         = "proxy.on_ok"
+	KeyProxyUnhealthy    = "proxy.unhealthy"
+	KeyProxyInstallDone  = "proxy.install_done"
+	KeyProxyNotInstalled = "proxy.not_installed"
+	KeyProxyNotRunning   = "proxy.not_running"
+	KeyProxyAlreadyOff   = "proxy.already_off"
+	KeyProxyOffOK        = "proxy.off_ok"
+	KeyProxyKeptBinary   = "proxy.kept_binary"
+	KeyProxyUninstalled  = "proxy.uninstalled"
+	KeyProxyStatusTitle  = "proxy.status_title"
+	KeyUninstallProxy    = "uninstall.proxy_removed"
 )
 
 // AllKeys 列出本文件声明的全部 key。
@@ -395,5 +437,44 @@ func AllKeys() []string {
 		KeyStatusDaemon,
 		KeyStatusDaemonNone,
 		KeyStatusResvKernel,
+		KeyPriorityTitle,
+		KeyPriorityV4,
+		KeyPriorityV6,
+		KeyPriorityDefault,
+		KeyPriorityOrderV4,
+		KeyPriorityOrderV6,
+		KeyPrioritySet,
+		KeyPriorityUnchanged,
+		KeyPriorityV6Caveat,
+		KeyPriorityHint,
+
+		KeyPriorityOrderUnknown,
+		KeyPriorityNoGetent,
+		KeyPriorityNotDebian,
+		KeyPriorityTooMany,
+		KeyProxyUsage,
+		KeyProxyNotDebian,
+		KeyProxyPortBusy,
+		KeyProxyBinary,
+		KeyProxyFromLocal,
+		KeyProxyVersion,
+		KeyProxyConfWritten,
+		KeyProxyConfigOK,
+		KeyProxyEnabled,
+		KeyProxyStarted,
+		KeyProxyNoStart,
+		KeyProxyReserved,
+		KeyProxyVerifyRetry,
+		KeyProxyOnOK,
+		KeyProxyUnhealthy,
+		KeyProxyInstallDone,
+		KeyProxyNotInstalled,
+		KeyProxyNotRunning,
+		KeyProxyAlreadyOff,
+		KeyProxyOffOK,
+		KeyProxyKeptBinary,
+		KeyProxyUninstalled,
+		KeyProxyStatusTitle,
+		KeyUninstallProxy,
 	}
 }

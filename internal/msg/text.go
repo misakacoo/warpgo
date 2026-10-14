@@ -21,11 +21,13 @@ var text = map[string]string{
   status               查看当前状态（--json 给脚本用）
   rotate               重新注册换一个 WARP 出口地址
   switch               在线互换后端（内核 / 用户态）或工作模式
+  priority             地址族优先级：4 = IPv4 优先，6 = IPv6 优先，d = 系统默认
+  proxy                WireProxy：把 WARP 做成一个本地 socks5 出口
 
 保活:
   watch                巡检：健康就不动，断了才重建
   install              把保活装成 systemd 服务（开机自启 + 立即启动）
-  uninstall            撤干净：单元、隧道、二进制、DNS 改动
+  uninstall            撤干净：单元、隧道、二进制、WireProxy、DNS 改动
   confirm              保留本次变更并解除回滚保险丝
 
 其他:
@@ -245,4 +247,66 @@ var text = map[string]string{
 	KeySwitchUnit:      "保活单元的启动参数已同步更新并重启（否则它下一轮会把它建回来）",
 	KeySwitchDone:      "互换完成：后端 %s，模式 %s，出口地址不变",
 	KeySwitchNotDebian: "互换设置会重构系统网络，因此拒绝在 %s 上运行",
+
+	// 地址族优先级（M6，菜单 s）
+	KeyPriorityTitle:     "地址族优先级",
+	KeyPriorityV4:        "IPv4 优先",
+	KeyPriorityV6:        "IPv6 优先",
+	KeyPriorityDefault:   "系统默认",
+	KeyPrioritySet:       "已把地址族优先级设为 %s（写入 %s）",
+	KeyPriorityUnchanged: "优先级已经是 %s —— 未改动 %s",
+	KeyPriorityV6Caveat: "说明：Debian 12 的 glibc 默认就是 IPv6 优先，而 `label 2002::/16   2` 这一行" +
+		"实测并不改变解析顺序 —— 所以这里真正起作用的一步是「把 IPv4 优先那一行删掉」。",
+	KeyPriorityHint: "gai.conf 只影响 glibc 的 getaddrinfo（curl / wget / apt / ssh 这类程序）；" +
+		"静态链接的程序与 Go 程序不读它，顺序由各自实现决定。",
+	KeyPriorityOrderV4:      "IPv4 优先（%s —— getent ahosts %s 的第一条）",
+	KeyPriorityOrderV6:      "IPv6 优先（%s —— getent ahosts %s 的第一条）",
+	KeyPriorityOrderUnknown: "无法测定解析顺序（%s）",
+	KeyPriorityNoGetent:     "无法用 getent 观察解析顺序（%s: %v）",
+	KeyPriorityNotDebian:    "改地址族优先级会改动系统文件，因此拒绝在 %s 上运行",
+	KeyPriorityTooMany:      "只能指定一个优先级（多出来的: %s）",
+
+	// WireProxy（M7，菜单 w / y）
+	KeyProxyUsage: `用法: warpgo proxy <install|uninstall|on|off|status>
+
+  install    下载 wireproxy、生成配置并装成 systemd 服务（菜单 w）
+  on | off   开 / 关这个 socks5 出口（菜单 y）
+  status     查看状态（--json 给脚本用）
+  uninstall  撤掉：停服务、删单元、删二进制与配置
+
+install 的选项:
+  --port <端口>          socks5 监听端口（默认 40000，只监听 127.0.0.1）
+  --version <版本>       默认钉死在 v1.1.3；写 latest 会去查最新版
+  --url <归档地址>       自己指定下载地址（必须同时给 --sha256）
+  --sha256 <校验和>      手工给出的校验和
+  --from <本地文件>      离线安装：用本机已有的归档或二进制
+  --mtu <MTU>            隧道内 MTU（默认与外层隧道一致）
+  --no-start             只装好，不立刻启动`,
+	KeyProxyNotDebian:   "装的是开机自启的服务，因此拒绝在 %s 上运行",
+	KeyProxyPortBusy:    "端口 %d 已经有人在监听 —— 换一个端口（--port）或先停掉那个进程",
+	KeyProxyBinary:      "已安装 %s（版本 %s，来源 %s，sha256 %s）",
+	KeyProxyFromLocal: "离线安装：使用本机文件 %s（没有联网，也没有发布页清单可核对；" +
+		"给了 --sha256 才会核对它）",
+	KeyProxyVersion:     "wireproxy 版本: %s",
+	KeyProxyConfWritten: "配置已写入 %s（0600；里面有私钥）",
+	KeyProxyConfigOK:    "配置自检通过（wireproxy -n 认这份配置）",
+	KeyProxyEnabled:     "已启用 %s（开机自启）",
+	KeyProxyStarted:     "已启动 %s",
+	KeyProxyNoStart:     "--no-start：没有启动 %s",
+	KeyProxyReserved: "注意：本账户带 reserved = %s，而 wireproxy 用的是官方 wireguard-go，" +
+		"**发不出那 3 个字节** —— 需要 reserved 的地区会表现为「配置都对、就是不通」。" +
+		"那种情况请改用隧道模式：`warpgo switch --backend userspace`",
+	KeyProxyVerifyRetry: "第 %d/%d 次探测还没通过（%v），稍后再试",
+	KeyProxyOnOK:        "WireProxy 已就绪：经 %s 访问的流量是 WARP（%s）",
+	KeyProxyUnhealthy: "WireProxy 在运行，但经它出去的流量还不是 WARP：%v\n" +
+		"（端口在听只说明进程活着，不代表链路通。）服务刻意保持运行 —— 对端恢复后它会自己接上；要关掉用 `warpgo proxy off`",
+	KeyProxyInstallDone:  "安装完成：socks5 已可用（%s，端口 %d）",
+	KeyProxyNotInstalled: "本机还没有装 WireProxy —— 先执行 `warpgo proxy install`",
+	KeyProxyNotRunning:   "%s 没有在运行（用 `warpgo proxy on` 启动，或重跑 install）",
+	KeyProxyAlreadyOff:   "WireProxy 本来就没在运行",
+	KeyProxyOffOK:        "已停止 WireProxy（端口 %d 已释放）",
+	KeyProxyKeptBinary:   "--keep-binary：保留 %s",
+	KeyProxyUninstalled:  "已撤销 WireProxy（处理了 %d 项：单元、二进制、配置与状态）",
+	KeyProxyStatusTitle:  "WireProxy 状态",
+	KeyUninstallProxy:    "已一并撤销 WireProxy（菜单 w 装的那套）",
 }
