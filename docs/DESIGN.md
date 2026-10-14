@@ -20,6 +20,8 @@
 | 2 | **默认模式 = 非全局** | 只对指定源地址加策略路由，天然不会切断 SSH |
 | 3 | **reserved = 一等公民** | 需要 vendor 一份打过补丁的 `wireguard-go`，需要时自动切用户态后端 |
 | 4 | **全新开始，不迁移旧安装** | 用户已卸载旧版；不需要"导入现有 warp.conf"模块；测试可随意 |
+| 5 | **DD 重装系统不编入**（2026-10-14 追加） | 参数错一位即机器报废，且往往在远程无 IPMI 的情况下；见 §14.1 |
+| 6 | **Teams OAuth 砍掉**（2026-10-14 追加） | 与"拿到出口"无关，约 300–500 行；`cloudflare` 只做 free / WARP+ 与设备管理；见 §14.2 |
 
 > 用户机器（Debian 12，非全局，原生 v4+v6）**已确认卸载干净** —— 见附录 A 的真机审计。
 > 该机器可作开发与真机验收的测试机，可随意安装/卸载。
@@ -40,7 +42,7 @@
 | `u` 卸载 | `uninstall()`（93 行） | `state.uninstall` | **M4** | 见 §8.13 的"必须还原清单" |
 | `v` 版本/同步 | `ver()` + `check_cdn()` | `cli.version` | M9 | Go 版无"同步脚本"，改为查新版本 + 可选自更新 |
 | `b` 升级内核 + BBR | `bbrInstall()` | `system.bbr` | M9 | 只做 BBR；内核升级只做"检查 + 提示" |
-| `b` 里的 DD 重装系统 | `bbrInstall()` 内 | `system.dd` | M9 | **默认不编入**（见 §14.1） |
+| ~~`b` 里的 DD 重装系统~~ | `bbrInstall()` 内 | — | — | **已确认不编入**（§14.1） |
 | `e` 分流（iptables+dnsmasq+ipset） | `iptables_solution()`（129 行）+ 配置 | `split` | M6 | 流媒体解锁那套 |
 | `w` WireProxy 方案 | `wireproxy_solution()` | `proxy` | M7 | 引入第三方 `wireproxy` 二进制 |
 | `y` WireProxy 开关 | `wireproxy_onoff()` | `proxy` | M7 | |
@@ -52,7 +54,7 @@
 | 菜单内状态显示 | `check_system_info()` + `menu()` | `health` + `cli.menu` | M2 | IPv4/IPv6 / 模式 / 内核 / 账户类型 |
 | 语言选择 | `select_language()` + 141 条文案 | `i18n` | M1 | 中英双语，跟 `LANG` 默认 |
 | 账户 / license / 设备 | `api.sh` 的 account 子命令 | `cloudflare.account` | M5 | WARP+ 绑定、设备列表、注销 |
-| Team 令牌注册 | `api.sh` 的 Teams OAuth 流程 | `cloudflare.teams` | M5 | 若不需要可砍，见 §14.2 |
+| ~~Team 令牌注册~~ | `api.sh` 的 Teams OAuth 流程 | — | — | **已确认砍掉**（§14.2） |
 | 运行次数统计 | `statistics_of_run-times()` | — | — | **建议默认关闭**远程上报（§8.14） |
 
 ---
@@ -64,6 +66,8 @@
 - 第三方内核 / OpenWrt / sing-box 导出（`warp-go.sh`，1471 行）
 - 除 Debian 外的发行版适配（不做 Alpine / busybox / openresolv 分支）
 - 纯 shell 实现（用编译产物换确定性与可观测性）
+- **Teams OAuth 令牌注册**（2026-10-14 用户确认砍掉）：与"拿到 WARP 出口"无关，约 300–500 行
+- **DD 重装系统**（2026-10-14 用户确认不编入）：见 §14.1
 
 ---
 
@@ -114,7 +118,8 @@ cmd/warpgo             CLI / 菜单 / i18n
 warpgo/
 ├── cmd/warpgo/main.go
 ├── internal/
-│   ├── cloudflare/  api.go types.go reserved.go account.go teams.go
+│   ├── cloudflare/  api.go types.go reserved.go account.go   # 不做 teams.go
+│   ├── wgconf/      keys.go profile.go                       # X25519 密钥、wg-quick 配置
 │   ├── tunnel/      tunnel.go kernel.go userspace.go uapi.go
 │   ├── netcfg/      link.go addr.go mtu.go dns.go route.go priority.go guard.go
 │   ├── split/       iptables.go dnsmasq.go ipset.go
@@ -169,6 +174,11 @@ type Runtime struct {
 
 存放：`/etc/warpgo/account.json`（0600）、`/etc/warpgo/runtime.json`、
 `/etc/warpgo/warpgo.toml`（用户可编辑的默认值）。
+
+**实现落点（M1）**：`Account` 定义在 `internal/cloudflare/account.go`，但密钥与地址存成
+字符串（base64 / CIDR）而不是定长数组与 `netip.Prefix` —— 因为 `account.json` 是要给人看、
+给人复制的文件。需要定长类型时由 `wgconf` 解析，依赖方向保持单向（`wgconf → cloudflare`）；
+`state` 只提供状态目录与原子写原语，不依赖任何业务类型。
 
 ---
 
@@ -387,7 +397,7 @@ RestartSec=30s
 | # | 内容 | 验收（真机 Debian 12） |
 |---|---|---|
 | **M0** | 骨架 + 状态/锁/i18n/日志 + 把调试残留移走 | `warpgo version` 能跑；`--lang` 生效；单实例锁三种行为（占用提示 / 心跳 / 接管）单测过 |
-| **M1** | `cloudflare` + `wgconf`：注册、reserved、profile | `warpgo profile > w.conf` 后 `wg-quick` 起得来且得 `warp=on`；`y8eh→[203,199,161]` 单测过 |
+| **M1** | `cloudflare` + `wgconf`：注册、reserved、profile | ✅ **完成**（2026-10-14）：真机验收 **39/39**，见下方 |
 | **M2** | `tunnel`(内核) + `netcfg` 非全局 + `up/down/status` + 菜单骨架 | 经接口得 `warp=on`、**SSH 不断**、默认路由仍原生；`up` 连跑 3 次规则数不变；`down` 零残留 |
 | **M3** | 全局模式 + fwmark + watchdog 回滚 | 全局下 SSH 不断；人为把端点改黑洞 → 45 秒内自动回滚且网络恢复 |
 | **M4** | `health` + `keepalive` + systemd + **卸载** | ① 健康时连跑 5 次**接口创建时间不变**；② `ip link del warp` 后一轮内自愈；③ 伪造旧格式锁能接管；④ `uninstall` 后系统回到 M0 前的干净状态（含 DNS 还原） |
@@ -396,6 +406,17 @@ RestartSec=30s
 | **M7** | `w` / `y` WireProxy | socks5 可用；开关后进程 / 单元 / 配置干净 |
 | **M8** | `c` / `l` / `r` 官方 Client + `z` / `x` 钩子 | 三种模式切换正确；`z`/`x` 的 ip rule 加减成对；`r` 开关后 `warp-cli status` 符合预期 |
 | **M9** | `b` BBR + 版本/自更新 + 打包 | BBR 开关与还原正确；静态二进制 + `.deb` 可装可卸；`--check` 能查到新版本 |
+
+**M1 交付**（2026-10-14，真机 Debian 12）：
+
+- `internal/cloudflare`：`Register` / `EnableWarp` / `GetDevice` / `RenameDevice` /
+  `SetLicense` / `UnbindDevice` / `DeleteDevice`；`reserved` 按 base64 原始字节解；
+  `account --json` 输出脱敏视图（不含私钥与令牌）。**不做 Teams OAuth。**
+- `internal/wgconf`：用 `crypto/ecdh` 生成已 clamp 的 X25519 密钥对（公钥与 RFC 7748
+  向量逐字节一致），profile 渲染是确定性输出。
+- 真机验收链路：注册 → 账户 0600 → **重复注册被拒** → profile 0600 → `wg-quick up` →
+  **v4 与 v6 均经隧道取到 `warp=on`** → `down` 后零残留 → `resolv.conf` 前后一致。
+- 单测 **64 条全通过**；`gofmt` / `go vet` 干净。
 
 **排序理由**：主干（自己实现的接口与出口）先行 —— 分流 / 代理 / 官方客户端都依赖它；
 危险与边缘功能放最后。
@@ -414,6 +435,18 @@ profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则�
 - **假 netlink**：断言 ① `up` 三次后规则各 1 条 ② `down` 后完全空
   ③ 模拟"接口已删 + `[detached]` 显示形态"时仍按句柄清干净。
 - **假 UAPI socket**：断言握手序列、`reserved` 确实下发到用户态后端。
+
+### M1 真机实测（2026-10-14）
+
+- **API 契约按真实响应核对过了**：`endpoint.v4` / `.v6` 的端口是 **0**（只有 `endpoint.host`
+  带 2408）—— 照抄 v4/v6 会得到一个 `:0` 的端点，看着有值、实际永远连不上。
+- `created` / `updated` / `tos` 的返回形态不稳定（字符串或 `{}`）：解析层用宽容类型，
+  不让一个无关字段把整次注册搞崩。
+- **`Table = off` 不接管任何路由，而 v4 与 v6 表现不同**：接口持有 v4 地址时内核允许
+  按出接口直发（实测 `ip route get 1.1.1.1 oif <if>` → `dev <if>`），v4 直接可用；
+  IPv6 路由语义严格，没有明确路由就是 `Network is unreachable`。
+  → M1 验收为两个探测地址各加一条 /32 与 /128 精确路由，把"隧道与出口可用"与
+  "路由接管（M2 的职责）"解耦，同时全程不动默认路由（SSH 安全）。
 
 ### 真机（`tests/e2e/`，Debian 12）
 
@@ -443,9 +476,11 @@ profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则�
 
 ---
 
-## 14. 我方保留意见（需要你一句话确认）
+## 14. 保留意见的处理结果
 
-### 14.1 DD 重装系统：建议不编入主程序
+**两处都已在 2026-10-14 由用户确认，按建议执行。**
+
+### 14.1 DD 重装系统：✅ 已确认 —— 不编入主程序
 
 `b` 里的 DD 会**把整台机器重装成另一个系统**，参数错一位就是机器报废
 （而且往往是在远程、无 IPMI 的情况下）。上游把它和 BBR 放在同一个菜单项里，是很危险的耦合。
@@ -456,12 +491,14 @@ profile 生成、trace 解析（`on`/`plus`/`off`/空/半截）、路由规则�
 ③ 交互二次确认 + 打印"即将执行的确切命令"，
 ④ 不做任何"自动选镜像"逻辑。
 
-### 14.2 Team 令牌注册（Teams OAuth）：要不要？
+**已按此执行：不编入 —— 代码里没有任何 dd 相关实现。**
+
+### 14.2 Team 令牌注册（Teams OAuth）：✅ 已确认 —— 砍掉
 
 `api.sh` 里有一套完整的 Teams Token 验证码流程（curl + cookie 手工复刻 OAuth），
 用于加入 Cloudflare Zero Trust 组织。这与"拿到 WARP 出口"无关，实现量约 300–500 行。
 
-如果你不用 Teams，建议砍掉（`account` 只保留 free / WARP+ 与设备列表）。
+**已按此执行**：`account` 只保留 free / WARP+ 与设备列表，代码里没有 Teams 相关实现。
 
 ---
 

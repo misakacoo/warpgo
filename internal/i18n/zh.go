@@ -9,9 +9,13 @@ var zh = map[string]string{
   warpgo <子命令> [选项]
 
 子命令:
+  register             注册新的 WARP 设备并保存账户
+  account              显示已保存的账户（--refresh 从服务端拉最新）
+  profile              为已保存的账户输出一份 wg-quick 配置
   version              显示版本信息
   help                 显示本帮助
   dev lock             演练单实例锁（开发调试用）
+  dev platform         检查是否为 Debian 系统
 
 全局选项:
   --lang en|zh         强制输出语言（默认按 LANG 推断）
@@ -19,7 +23,7 @@ var zh = map[string]string{
   -q, --quiet          只显示警告与错误
 
 计划中的子命令（按里程碑逐步实现）:
-  register  up  down  status  watch  rotate  switch  priority
+  up  down  status  watch  rotate  switch  priority
   split  proxy  client  bbr  uninstall  version --check
 
 退出码:
@@ -43,6 +47,35 @@ var zh = map[string]string{
 	KeyLockKilled:          "已终止失控的持锁进程 PID %d",
 	KeyNotImplemented:      "尚未实现（计划在里程碑 %s 中完成）",
 	KeyLockTouch:           "已刷新心跳（持有者 PID %d）",
+
+	KeyRegStart:        "正在注册新的 WARP 设备……",
+	KeyRegDone:         "已注册设备 %s（账户类型: %s）",
+	KeyRegSaved:        "账户已保存到 %s（权限 0600）",
+	KeyRegExists:       "%s 已存在账户；重新注册会更换你的 WARP IP —— 确实要这样做请加 --force",
+	KeyRegReservedOK:   "reserved = %s（由 client_id %q 解出）",
+	KeyRegReservedNone: "服务端没有返回 client_id，reserved 记为 0, 0, 0 —— 在需要 reserved 的地区握手可能被丢弃",
+	KeyRegEnableFailed: "无法在该设备上启用 WARP: %v（账户已保存，可稍后执行 `warpgo account --enable` 重试）",
+	KeyRegAddr:         "接口地址: %s",
+	KeyRegEndpoint:     "对端端点: %s",
+
+	KeyAcctNone:        "本机还没有账户 —— 请先执行 `warpgo register`",
+	KeyAcctTitle:       "WARP 账户",
+	KeyAcctRefreshed:   "已从服务端刷新账户信息",
+	KeyAcctEnableOK:    "已在该设备上启用 WARP",
+	KeyAcctLicenseOK:   "已为该账户绑定 license",
+	KeyAcctSecretsHint: "私钥与访问令牌保存在 %s，此处刻意不显示",
+
+	KeyNeedRoot: "无法准备状态目录 %s（注册需要 root 权限，或把 WARPGO_ETC 指向可写目录）",
+
+	KeyProfNote: `由 warpgo 生成（设备 %s）。重新生成请执行 ` + "`warpgo profile`" + `。
+把它交给 wg-quick 会接管默认路由（所有流量都走 WARP）；
+在远程服务器上请先确认这不会切断你的 SSH。
+内核 WireGuard 会忽略 "# Reserved" 这一行，原因见 docs/DESIGN.md §8.2。`,
+	KeyProfSaved:      "wg-quick 配置已写入 %s（权限 %s）",
+	KeyProfSkipped:    "账户没有 %s 地址，已跳过该族",
+	KeyProfKernelWarn: "注意：本配置带 reserved = %s，但内核 WireGuard 模块设置不了那 3 个字节 —— 需要 reserved 的地区要用用户态后端（里程碑 M5）",
+	KeyProfTableOffHint: "Table = off：本配置不接管任何路由。IPv4 仍可用，因为接口持有地址、内核允许按出接口直发；" +
+		"IPv6 必须有明确路由（M2 的非全局模式会负责这件事）。",
 
 	KeyPlatformDebian:   "系统检查: Debian %s",
 	KeyPlatformNotDebia: "本命令只支持 Debian（检测到: %s）",

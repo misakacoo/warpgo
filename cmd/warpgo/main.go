@@ -65,6 +65,12 @@ func run(args []string) int {
 		return exitOK
 	case "version", "-V", "--version":
 		return a.cmdVersion(cmdArgs)
+	case "register":
+		return a.cmdRegister(cmdArgs)
+	case "account":
+		return a.cmdAccount(cmdArgs)
+	case "profile":
+		return a.cmdProfile(cmdArgs)
 	case "dev":
 		return a.cmdDev(cmdArgs)
 	default:
