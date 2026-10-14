@@ -63,7 +63,12 @@ func (a *app) cmdDown(args []string) int {
 	if err := state.RemoveRuntime(state.RuntimePath()); err != nil {
 		return a.fail(err)
 	}
-	// 拆掉之后就没有"待回滚的变更"了 —— 让 confirm 能如实回答"当前没有待确认的改动"。
+	// 拆掉之后就没有"待回滚的变更"了：
+	//   · 解除可能还在等待的保险丝（否则它超时后会去拆未来建立的东西）；
+	//   · 清掉快照，让 confirm 能如实回答"当前没有待确认的改动"。
+	if err := rollback.Disarm(); err != nil {
+		a.log.Warnf("%v", err)
+	}
 	if err := rollback.ClearSnapshot(); err != nil {
 		a.log.Warnf("%v", err)
 	}

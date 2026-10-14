@@ -128,6 +128,17 @@ ip link show "$IFACE" >/dev/null 2>&1 && bad "接口残留" || ok "接口已清�
 [ "$(our_rules)" = 0 ] && ok "我们加的规则已清空" || bad "规则残留 $(our_rules) 条"
 default_is_native && ok "默认路由仍是原生" || bad "默认路由异常"
 
+# ★ 主动回滚之后，保险丝也必须被解除。
+#
+# 少了这一步会有一个很隐蔽的故障：这个保险丝还在数秒（它以为自己的超时还没到），
+# 到点后再回滚一遍 —— 恰好把用户在这段时间里重新建立的隧道拆掉，
+# 表现成"莫名其妙掉线"。这里用相对严格的模式匹配，避免把 shell 自己算进去。
+sleep 1
+leftover_guard=$(ps -eo args | grep -cE '^/root/warpgo/dist/warpgo .*rollback-guard' || true)
+[ "$leftover_guard" = 0 ] \
+  && ok "主动回滚后保险丝已解除（不会误拆后续隧道）" \
+  || bad "主动回滚后仍有 $leftover_guard 个保险丝在跑 —— 它超时后会误拆后面的隧道"
+
 section "4. 命令中断场景：保险丝超时自动回滚"
 # 这是保险丝存在的**唯一理由**：主流程没机会确认（会话断了、进程被杀了……），
 # 保险丝必须在若干秒后无条件把网络救回来。

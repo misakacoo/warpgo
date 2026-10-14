@@ -116,6 +116,13 @@ func (a *app) cmdUp(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), upTimeout)
 	defer cancel()
 
+	// 上一次变更可能留下了还在等待的保险丝（比如上次自检失败但进程还没退出）：
+	// 先解除它。否则它会在超时后把**这次**刚建立的东西拆掉，
+	// 表现成"莫名其妙掉线"，而且极难排查。
+	if err := rollback.Disarm(); err != nil {
+		a.log.Warnf("%v", err)
+	}
+
 	// ★ 全局模式的前置：**先上保险，再动网络**。
 	//
 	// 顺序不能反。保险丝的整个意义就是"当变更把网络弄断时，还有人在数秒后拉闸"；
@@ -201,6 +208,11 @@ func (a *app) finishGlobal(ctx context.Context, snap *rollback.Snapshot, plan *n
 		a.log.Warnf("%s", a.bundle.T(i18n.KeyUpRollingBack))
 		if rerr := rollback.Rollback(snap, a.guardLog); rerr != nil {
 			return a.fail(rerr)
+		}
+		// 回滚完了就要解除保险丝 —— 否则它超时后会再回滚一次，
+		// 把用户随后建立的隧道拆掉（见 rollback.Disarm 的说明）。
+		if derr := rollback.Disarm(); derr != nil {
+			a.log.Warnf("%v", derr)
 		}
 		_ = rollback.ClearSnapshot()
 		return exitUnhealthy
