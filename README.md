@@ -16,7 +16,7 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 |---|---|---|
 | M0 | 骨架、单实例锁、文案、日志 | ✅ 完成 |
 | M1 | 注册 / reserved / profile 生成 | ✅ 完成（真机 39/39；已有账户时跳过注册段 → 33/33） |
-| M2 | 内核后端 + 非全局出口 + up/down/status | ✅ 完成（真机 38/38） |
+| M2 | 内核后端 + 非全局出口 + up/down/status | ✅ 完成（真机 76/76） |
 | M3 | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ 完成（真机 34/34） |
 | M4 | 体检 + 保活 + systemd + 卸载 | ✅ 完成（真机 69/69） |
 | M5 | 用户态后端（reserved）+ rotate 换 IP + switch 在线互换 | ✅ 完成（真机 73/73） |
@@ -424,7 +424,7 @@ go test ./...              # 单元测试（不需要 root、不需要网络）
 
 tests/e2e/m0-lock.sh                   # M0 真机验收（单实例锁，16 项）
 tests/e2e/m1-register.sh               # M1 真机验收（注册 + 隧道，39 项）
-tests/e2e/m2-updown.sh                 # M2 真机验收（幂等 / 零残留 / SSH 安全，38 项）
+tests/e2e/m2-updown.sh                 # M2 真机验收（幂等 / 零残留 / 临时开关 / 栈切换 / SSH 安全，76 项）
 tests/e2e/m3-global.sh                 # M3 真机验收（全局 + 回滚，34 项）
 tests/e2e/m4-watch.sh                  # M4 真机验收（保活 + systemd + 卸载，69 项）
 tests/e2e/m5-userspace.sh              # M5 真机验收（用户态后端 + 抓包验 reserved + 换 IP，73 项）
