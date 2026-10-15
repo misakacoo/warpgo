@@ -5,9 +5,9 @@
 # Windows 只是编辑代码的地方，不装工具链，也就不会出现「在我机器上能跑」的问题。
 #
 # 用法:
-#   ./build.sh                       # 只为本机构建到 dist/warpgo
-#   VERSION=0.1.0 ./build.sh
-#   TAG=v0.1.0 ./build.sh release    # 交叉编译发布产物（amd64 + arm64）+ checksums.txt
+#   ./build.sh                       # 只为本机构建到 dist/warpgo（版本号记作 dev）
+#   VERSION=0.1.1 ./build.sh
+#   TAG=v0.1.1 ./build.sh release    # 交叉编译发布产物（amd64 + arm64）+ checksums.txt
 set -euo pipefail
 
 cd "$(dirname "$0")"

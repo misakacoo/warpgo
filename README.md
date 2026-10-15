@@ -63,17 +63,21 @@ warpgo 负责把一台 Debian 机器接入 Cloudflare WARP：注册设备、建�
 ### 从 Release 安装（推荐）
 
 发布产物按架构打包：`warpgo_<版本>_linux_<架构>.tar.gz`，并附带 `checksums.txt`。
+下面的 `VERSION` 换成你要的那个版本，最新版本号见
+<https://github.com/misakacoo/warpgo/releases/latest>。
 
 ```bash
-VERSION=v0.1.0
+VERSION=v0.1.1
 ARCH=amd64          # 或 arm64
 
 BASE="https://github.com/misakacoo/warpgo/releases/download/${VERSION}"
 curl -fLO "${BASE}/warpgo_${VERSION}_linux_${ARCH}.tar.gz"
 curl -fLO "${BASE}/checksums.txt"
 
-# 校验下载物（务必做 —— 这是唯一能确认文件没有被截断或篡改的办法）
-sha256sum -c checksums.txt
+# 校验下载物（务必做 —— 这是唯一能确认文件没有被截断或篡改的办法）。
+# --ignore-missing 不能少：清单里两个架构都列着，而我们只下了自己那个，
+# 不加它另一条会报 FAILED open or read、退出码 1 —— 那不是文件坏了。
+sha256sum -c checksums.txt --ignore-missing
 
 tar -xzf "warpgo_${VERSION}_linux_${ARCH}.tar.gz"     # 解出 ./warpgo/{warpgo,README.md,LICENSE}
 sudo install -m 0755 ./warpgo/warpgo /usr/bin/warpgo
@@ -92,7 +96,7 @@ warpgo version
 ```bash
 git clone https://github.com/misakacoo/warpgo.git
 cd warpgo
-VERSION=0.1.0 ./build.sh          # 产出 dist/warpgo
+VERSION=0.1.1 ./build.sh          # 产出 dist/warpgo（不传则记作 dev）
 sudo install -m 0755 dist/warpgo /usr/bin/warpgo
 ```
 
@@ -674,9 +678,9 @@ sudo warpgo uninstall --keep-binary
 ### 构建
 
 ```bash
-./build.sh                      # 只为本机构建 → dist/warpgo
-VERSION=0.1.0 ./build.sh        # 指定版本号
-TAG=v0.2.0 ./build.sh release   # 交叉编译 amd64 + arm64 → tar.gz + checksums.txt
+./build.sh                      # 只为本机构建 → dist/warpgo（版本号记作 dev）
+VERSION=0.1.1 ./build.sh        # 指定版本号
+TAG=v0.1.1 ./build.sh release   # 交叉编译 amd64 + arm64 → tar.gz + checksums.txt
 ```
 
 ### 单元测试

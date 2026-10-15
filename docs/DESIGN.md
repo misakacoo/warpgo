@@ -867,6 +867,10 @@ warpgo version --self-update --no-restart     # 不重启保活单元
 - 发布由 `.github/workflows/release.yml` 在 `v*` tag 上触发；**不**做"push 到 main  
   就构建"—— 这个项目没有 CI 产物消费方，那只会让 Actions 里堆一堆没人看的东西。  
   工作流里先跑 `gofmt` / `go vet` / `go test`：一个测试都不过的 tag 不该产出发布产物。
+- **README 的示例版本号必须跟着 tag 一起走**。安装段那几处 `VERSION=` 不是装饰 ——  
+  读者会照着它去 `releases/download/<版本>/…` 取文件。写旧了不会报错（旧 Release 还在），  
+  只会静默装上一个少修了几个 bug 的版本，比报错更糟。（v0.1.1 发出来时就踩过一次：  
+  README 还停在 `v0.1.0`。）打 tag 时顺手 `grep -n '0\.[0-9]\.[0-9]' README.md build.sh` 扫一遍。
 - **没有遥测，也没有运行次数统计**（2026-10-15 用户确认砍掉）。
 
   上游实现（`statistics_of_run-times()`）在**每次运行**都向 `stat.cloudflare.now.cc/updateStats`
