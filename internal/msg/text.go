@@ -17,6 +17,8 @@ var text = map[string]string{
 
 隧道:
   up                   建立隧道（幂等；--mode global 为全局接管）
+  off                  临时关闭：拆隧道、停保活，但保留配置（可随时 on 回来）
+  on                   恢复：按上次的配置重建，并把保活服务拉回来
   down                 拆除隧道并清空全部残留
   status               查看当前状态（--json 给脚本用）
   rotate               重新注册换一个 WARP 出口地址
@@ -49,6 +51,7 @@ var text = map[string]string{
                        隧道后端；auto 会先用内核，实测不通再切用户态
   --mode non-global|global
                        出口接管方式；默认非全局（不会切断 SSH）
+  --stack 4|6|d        隧道携带哪几族地址（4 = 只 IPv4，6 = 只 IPv6，d = 双栈）
   --ifname / --mtu / --endpoint / --dns
                        接口名 / MTU / 对端端点 / 隧道内 DNS
 
@@ -133,6 +136,7 @@ var text = map[string]string{
 	KeyUpReasonNeedReserved: "需要 reserved 但当前后端不支持",
 	KeyUpReasonLockBusy:     "被单实例锁挡住",
 	KeyUpReasonNotDebian:    "不是 Debian 系统",
+	KeyUpStackRebuild: "栈从 %s 变成 %s —— 接口上原来那一族的地址不会自己消失，改为先拆后建",
 	KeyUpReasonError:        "执行出错",
 
 	KeyDownStart:   "正在拆除 WARP 隧道",
@@ -383,7 +387,9 @@ install 的选项:
 	KeyMenuAskPriority:   "地址族优先级（4 = IPv4 优先，6 = IPv6 优先，d = 系统默认）> ",
 	KeyMenuUpNonGlobal:   "建立隧道（非全局，不会切断 SSH）",
 	KeyMenuUpGlobal:      "建立隧道（全局接管，带自动回滚）",
-	KeyMenuDown:          "拆除隧道",
+	KeyMenuDown:          "拆除隧道（清空全部残留）",
+	KeyMenuOff:           "临时关闭（保留配置，可随时恢复）",
+	KeyMenuOn:            "恢复隧道（按上次的配置）",
 	KeyMenuStatus:        "查看状态",
 	KeyMenuRotate:        "换一个出口 IP（重新注册）",
 	KeyMenuSwitchBackend: "在线互换后端（内核 ↔ 用户态）",
@@ -397,6 +403,11 @@ install 的选项:
 	KeyMenuProxyToggle:   "WireProxy：开关",
 	KeyMenuInstallWatch:  "保活：装成 systemd 服务",
 	KeyMenuUninstall:     "卸载 warpgo",
+
+	// 临时关闭与恢复（上游菜单 `o`）
+	KeyOffKeptRuntime: "已保留运行态 —— 下次 `warpgo on` 会按这份配置原样恢复",
+	KeyOffDone:        "隧道已临时关闭（配置与保活单元都留着）。恢复：`warpgo on`",
+	KeyOnWatchStarted: "已把保活服务 %s 拉回来",
 
 	// 菜单顶部那行状态摘要
 	KeyMenuStatusUp:        "隧道 %s",

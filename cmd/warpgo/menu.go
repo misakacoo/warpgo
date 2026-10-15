@@ -74,20 +74,22 @@ func menuEntries() []menuEntry {
 	return []menuEntry{
 		{"1", msg.KeyMenuUpNonGlobal, []string{"up"}},
 		{"2", msg.KeyMenuUpGlobal, []string{"up", "--mode", "global"}},
-		{"3", msg.KeyMenuDown, []string{"down"}},
-		{"4", msg.KeyMenuStatus, []string{"status"}},
-		{"5", msg.KeyMenuRotate, []string{"rotate"}},
-		{"6", msg.KeyMenuSwitchBackend, nil}, // 需要读运行态决定方向
-		{"7", msg.KeyMenuSwitchMode, nil},    // 同上
-		{"8", msg.KeyMenuPriority, nil},      // 需要追问 4 / 6 / d
-		{"9", msg.KeyMenuClientProxy, []string{"client", "install", "--mode", "proxy"}},
-		{"10", msg.KeyMenuClientWarp, []string{"client", "install", "--mode", "warp"}},
-		{"11", msg.KeyMenuClientToggle, nil}, // 按当前状态决定 on / off
-		{"12", msg.KeyMenuClientStatus, []string{"client", "status"}},
-		{"13", msg.KeyMenuProxyInstall, []string{"proxy", "install"}},
-		{"14", msg.KeyMenuProxyToggle, nil}, // 按当前状态决定 on / off
-		{"15", msg.KeyMenuInstallWatch, []string{"install"}},
-		{"16", msg.KeyMenuUninstall, []string{"uninstall"}},
+		{"3", msg.KeyMenuOff, []string{"off"}},
+		{"4", msg.KeyMenuOn, []string{"on"}},
+		{"5", msg.KeyMenuDown, []string{"down"}},
+		{"6", msg.KeyMenuStatus, []string{"status"}},
+		{"7", msg.KeyMenuRotate, []string{"rotate"}},
+		{"8", msg.KeyMenuSwitchBackend, nil}, // 需要读运行态决定方向
+		{"9", msg.KeyMenuSwitchMode, nil},    // 同上
+		{"10", msg.KeyMenuPriority, nil},     // 需要追问 4 / 6 / d
+		{"11", msg.KeyMenuClientProxy, []string{"client", "install", "--mode", "proxy"}},
+		{"12", msg.KeyMenuClientWarp, []string{"client", "install", "--mode", "warp"}},
+		{"13", msg.KeyMenuClientToggle, nil}, // 按当前状态决定 on / off
+		{"14", msg.KeyMenuClientStatus, []string{"client", "status"}},
+		{"15", msg.KeyMenuProxyInstall, []string{"proxy", "install"}},
+		{"16", msg.KeyMenuProxyToggle, nil}, // 按当前状态决定 on / off
+		{"17", msg.KeyMenuInstallWatch, []string{"install"}},
+		{"18", msg.KeyMenuUninstall, []string{"uninstall"}},
 	}
 }
 
@@ -151,15 +153,15 @@ func (a *app) menuArgv(choice string, in *bufio.Reader) ([]string, bool) {
 			continue
 		}
 		switch choice {
-		case "6":
-			return a.menuSwitchBackend(in)
-		case "7":
-			return a.menuSwitchMode(in)
 		case "8":
+			return a.menuSwitchBackend(in)
+		case "9":
+			return a.menuSwitchMode(in)
+		case "10":
 			return a.menuPriority(in)
-		case "11":
+		case "13":
 			return a.menuClientToggle(in)
-		case "14":
+		case "16":
 			return a.menuProxyToggle(in)
 		default:
 			return e.argv, true

@@ -8,6 +8,7 @@ import (
 	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/rollback"
+	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/system"
 	"github.com/misakacoo/warpgo/internal/tunnel"
 )
@@ -20,6 +21,7 @@ func (a *app) cmdUp(args []string) int {
 	var (
 		modeStr         string
 		backendStr      string
+		stackStr        string
 		ifName          string
 		mtu             int
 		endpoint        string
@@ -31,6 +33,7 @@ func (a *app) cmdUp(args []string) int {
 	opts := newOptionSet().
 		Str("--mode", &modeStr).
 		Str("--backend", &backendStr).
+		Str("--stack", &stackStr).
 		Str("--ifname", &ifName).
 		Int("--mtu", &mtu).
 		Str("--endpoint", &endpoint).
@@ -49,6 +52,28 @@ func (a *app) cmdUp(args []string) int {
 	backend, err := tunnel.ParseBackend(backendStr)
 	if err != nil {
 		return a.fail(err)
+	}
+	// 只有显式给了 --stack 才覆盖 —— 空值要留给 ensureTunnel 去**沿用
+	// 运行态里的选择**（否则一次 `up` 就会把用户选的"只用 IPv4"改回双栈）。
+	var stack netcfg.Stack
+	if stackStr != "" {
+		s, perr := netcfg.ParseStack(stackStr)
+		if perr != nil {
+			return a.fail(perr)
+		}
+		stack = s
+	}
+
+	// 换了栈就必须重建：接口上原来那一族的地址**不会自己消失**，
+	// 而 netcfg 的"先清后加"只清规则与它自己那张路由表，不碰接口地址。
+	if stackStr != "" && !force {
+		if rt, rerr := state.LoadRuntime(state.RuntimePath()); rerr == nil {
+			before := netcfg.Stack(rt.Stack).Normalize()
+			if after := stack.Normalize(); before != after {
+				force = true
+				a.log.Infof("%s", msg.Tf(msg.KeyUpStackRebuild, before, after))
+			}
+		}
 	}
 
 	guardTimeout := rollback.DefaultTimeout
@@ -87,6 +112,7 @@ func (a *app) cmdUp(args []string) int {
 		IfName:       ifName,
 		Mode:         mode,
 		Backend:      backend,
+		Stack:        stack,
 		MTU:          mtu,
 		Endpoint:     endpoint,
 		DNS:          splitList(dnsStr),

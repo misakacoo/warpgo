@@ -190,6 +190,8 @@ const (
 	KeyUpReasonLockBusy     = "up.reason.lock_busy"
 	KeyUpReasonNotDebian    = "up.reason.not_debian"
 	KeyUpReasonError        = "up.reason.error"
+	// 换栈必须重建（上游菜单 4 / 6 / d）
+	KeyUpStackRebuild = "up.stack_rebuild"
 
 	// 换 IP（M5）
 	KeyRotateStart       = "rotate.start"
@@ -326,6 +328,8 @@ const (
 	KeyMenuUpNonGlobal   = "menu.up_non_global"
 	KeyMenuUpGlobal      = "menu.up_global"
 	KeyMenuDown          = "menu.down"
+	KeyMenuOff           = "menu.off"
+	KeyMenuOn            = "menu.on"
 	KeyMenuStatus        = "menu.status"
 	KeyMenuRotate        = "menu.rotate"
 	KeyMenuSwitchBackend = "menu.switch_backend"
@@ -339,6 +343,11 @@ const (
 	KeyMenuProxyToggle   = "menu.proxy_toggle"
 	KeyMenuInstallWatch  = "menu.install_watch"
 	KeyMenuUninstall     = "menu.uninstall"
+
+	// 临时关闭与恢复（上游菜单 `o`）
+	KeyOffKeptRuntime = "off.kept_runtime"
+	KeyOffDone        = "off.done"
+	KeyOnWatchStarted = "on.watch_started"
 
 	// 菜单顶部那行状态摘要（M8，纯本地读取，不联网）
 	KeyMenuStatusUp        = "menu.status_up"
@@ -515,6 +524,7 @@ func AllKeys() []string {
 		KeyUpReasonLockBusy,
 		KeyUpReasonNotDebian,
 		KeyUpReasonError,
+		KeyUpStackRebuild,
 		KeyRotateStart,
 		KeyRotateAttempt,
 		KeyRotateSameAddr,
@@ -636,6 +646,8 @@ func AllKeys() []string {
 		KeyMenuUpNonGlobal,
 		KeyMenuUpGlobal,
 		KeyMenuDown,
+		KeyMenuOff,
+		KeyMenuOn,
 		KeyMenuStatus,
 		KeyMenuRotate,
 		KeyMenuSwitchBackend,
@@ -649,6 +661,9 @@ func AllKeys() []string {
 		KeyMenuProxyToggle,
 		KeyMenuInstallWatch,
 		KeyMenuUninstall,
+		KeyOffKeptRuntime,
+		KeyOffDone,
+		KeyOnWatchStarted,
 		KeyMenuStatusUp,
 		KeyMenuStatusDown,
 		KeyMenuStatusMode,

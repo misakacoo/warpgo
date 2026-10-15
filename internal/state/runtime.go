@@ -38,6 +38,20 @@ type Runtime struct {
 	Addrs    []string `json:"addrs"`
 	Endpoint string   `json:"endpoint"`
 
+	// Stack 是隧道携带哪几族地址（`both` / `4` / `6`，上游菜单 `4`/`6`/`d`）。
+	//
+	// 空串按双栈处理（老版本写的运行态文件里没有这个字段）。
+	// 它必须持久化：`watch` 重建与 `switch` 互换都要照它来，
+	// 否则一次巡检就会把用户选的"只用 IPv4"悄悄改回双栈。
+	Stack string `json:"stack,omitempty"`
+
+	// DNS 记录这次 up 时把 /etc/resolv.conf 改成了哪几个服务器（空 = 没改过）。
+	//
+	// 存在的意义是让"临时关掉再打开"（`off` / `on`）能**原样恢复**：
+	// `off` 必须把 resolv.conf 还原回去（否则机器解析不了域名），
+	// 而 `on` 要靠这个字段知道当初改成了什么。
+	DNS []string `json:"dns,omitempty"`
+
 	UpSince time.Time `json:"up_since"`
 }
 

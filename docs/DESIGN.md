@@ -43,8 +43,8 @@
 
 | 菜单项                              | 现有实现                                     | Go 模块                      | 里程碑                  | 备注                                                                                     |
 | -------------------------------- | ---------------------------------------- | -------------------------- | -------------------- | -------------------------------------------------------------------------------------- |
-| `4` `6` `d` 装接口/切栈               | `install()` + `stack_switch()`           | `netcfg` + `tunnel`        | ✅ **M2**             | 已装则变为"切栈"（改 AllowedIPs 注释）                                                               |
-| `o` 临时开关                         | `onoff()`                                | 并入 `up` / `down`           | ✅ **M2**             | **不单设子命令**：关 = `down`（要留住保活用 `--keep-watch`），开 = `up`；账户与配置始终保留                                  |
+| `4` `6` `d` 装接口/切栈               | `install()` + `stack_switch()`           | `netcfg.Stack` + `tunnel`  | ✅ **M2**             | `up --stack 4\|6\|d` 决定隧道**携带哪几族**；换栈自动先拆后建。见 §8.18                                     |
+| `o` 临时开关                         | `onoff()`                                | `cmd/warpgo/on.go` + `down.go` | ✅ **M2**          | `off` = 拆隧道 + 停保活，但**保留运行态**；`on` = 按上次的运行态**原样恢复**（模式 / 后端 / MTU / 端点 / DNS）并把保活拉回来。见 §8.17 |
 | `n` 获取 IP / 重连                   | `net()`（199 行）                           | `health` + `keepalive`     | ✅ **M2/M4**          | **新语义**：默认先体检，健康不动；`--force` 才重建。保活即 `watch`（M4）                                        |
 | `i` 换 IP（Netflix）                | `change_ip()`（214 行）                     | `cloudflare` + `netcfg`    | ✅ **M5**             | 重新注册换出口；**不做**流媒体解锁探测（见 §8.16）                                                          |
 | `g` 全局/非全局切换                     | `working_mode_switch()`                  | `netcfg.route` + `switch`  | ✅ **M3/M5**          | 要连路由一起换，不是只改注释                                                                         |
@@ -931,6 +931,73 @@ IP 为止。**我们只做"换一个出口"，不做解锁判定**，理由有�
 
 ---
 
+### 8.17 临时开关（`off` / `on`）—— 上游菜单 `o`
+
+上游的 `o` 就两件事：接口在就 `wg-quick down warp`（**保留** `warp.conf`），
+不在就 `net` 把它拉起来。warpgo 对应的是 `off` / `on`：
+
+```
+warpgo off      # 拆隧道、停保活，但保留运行态
+warpgo on       # 按上次的运行态原样恢复，并把保活拉回来
+```
+
+**与 `down` 的差别只有一处，但那处很要紧**：`down` 会删掉 `runtime.json`
+（它的语义是"清空全部残留"），而 `off` **留着**。于是 `on` 能按原来的
+模式 / 后端 / MTU / 端点 / DNS 重建，而不是退回账户的默认配置。
+
+三个刻意的做法：
+
+- **`on` 不重新实现一遍"建隧道"**，而是把运行态翻译成一组 `up` 的参数再交给
+  `cmdUp` —— 于是"恢复"与"建立"走**同一条代码路径**，不会出现
+  "up 能修好、on 修不好"这种分叉。
+- **后端用 `backend_requested` 而不是 `backend`**：后者可能是 auto 自动降级的结果，
+  照搬会把它钉死成一个永久选择（与 §8.2 里那两个字段存在的理由是同一条）。
+- **保活要不要拉回来，用 `systemctl is-enabled` 判断**，而不是记一个
+  `was_watching` 标志 —— 前者是**无状态**的：重启过机器、换过 shell、
+  甚至换过一次 warpgo 版本，判断都一样。记标志反而会多出一份可能与现实不符的状态。
+  同理，`off` 只 `stop` 保活、**不动 `enabled`**，所以"临时"是名副其实的：
+  重启之后它自己会把隧道拉回来。
+
+`off` 也会还原 `/etc/resolv.conf`：隧道一拆，WARP 的解析器就不可达了，
+不还原的话机器会变成"网还在、域名一个都解析不了"——那比隧道关掉难受得多。
+当初改成了什么记在运行态里（`Runtime.DNS`），`on` 会照着改回去。
+
+
+### 8.18 栈：隧道携带哪几族（`4` / `6` / `d`）
+
+上游的 `4` / `6` / `d` 是"为 NATIVE 添加 WARP IPv4 / IPv6 / 双栈网络接口"，
+装过之后再按一次就是 `stack_switch()`（改 `AllowedIPs` 里的注释）。
+warpgo 对应的是 `up --stack 4|6|d`：
+
+```
+warpgo up --stack 4     # 只装 IPv4：接口上只有 v4 地址、只有 v4 的规则与路由
+warpgo up --stack 6     # 只装 IPv6
+warpgo up --stack d     # 双栈（默认）
+```
+
+**别和 §8.8 的"地址族优先级"混起来**，它们解决的是两件不同的事：这里决定
+**隧道里装了几族地址**，优先级决定**解析器先问哪一族**（写 `/etc/gai.conf`）。
+上游把它们放在菜单的不同位置、名字却都是 `4`/`6`/`d`，所以这里刻意用
+`--stack` 而不是 `--family` 之类的名字。
+
+三个刻意的做法：
+
+- **换栈必须"先拆后建"**。`netcfg.Apply` 的"先清后加"只清规则与它自己那张路由表，
+  **不碰接口地址** —— 从双栈切到只用 v4 时，v6 地址会留在接口上，
+  于是"只用 IPv4"名不副实。所以 `up` 发现栈变了就自动带上 `--force` 重建，
+  并在日志里说明原因（**静默重建**是不能接受的：那会换一次出口 IP）。
+- **栈要持久化**（`Runtime.Stack`），并且**在一处集中继承**：`ensureTunnel` 开头
+  如果发现调用方没指定栈，就从运行态里读。集中一处是因为 `watch` 重建、
+  `switch` 互换、`rotate` 换 IP 都会走到那里 —— 任何一处漏了，症状都是
+  "隧道照样通，只是悄悄多了一族"，极难发现。
+- **双栈走快路径**：`Stack.Families()` 对双栈返回 `nil`（表示"不限制"），
+  `applyStack` 见到 `nil` 原样返回同一个切片，一个字节都不动。
+  双栈是最常见的路径，不该被过滤逻辑碰到。
+
+账户里没有那一族时给的是**明确的错**（"账户里没有 IPv4 的地址，装不了 --stack 4"），
+而不是让下游报一句"账户里没有任何接口地址"——后者会让人去查账户，而账户其实是好的。
+
+
 ## 9. CLI 与菜单
 
 子命令（非交互优先，菜单只是它的薄封装）：
@@ -941,8 +1008,10 @@ warpgo register [--force] [--locale zh_CN]
 warpgo account [--json]                       # 纯本地读取，不联网
 warpgo profile [--out FILE] [--family ...] [--table-off] [--no-dns]
 warpgo up [--mode non-global|global] [--backend auto|kernel|userspace]
-          [--ifname] [--mtu] [--endpoint] [--dns] [--force] [--no-confirm]
+          [--stack 4|6|d] [--ifname] [--mtu] [--endpoint] [--dns] [--force] [--no-confirm]
 warpgo down [--ifname] [--keep-watch]
+warpgo off                                       # o 临时关闭（保留运行态）
+warpgo on [同 up 的选项]                          # o 恢复（按上次的运行态，显式选项优先）
 warpgo status [--json]
 warpgo rotate [--attempts N] [--mode ...] [--backend ...]      # i 换 IP
 warpgo switch [--backend ...] [--mode ...]                     # k 内核↔用户态 / g 全局↔非全局

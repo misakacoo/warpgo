@@ -64,6 +64,12 @@ func run(args []string) int {
 		return a.cmdProfile(cmdArgs)
 	case "up":
 		return a.cmdUp(cmdArgs)
+	case "on":
+		// 菜单 `o` 的"开"：按上次的运行态恢复（与 up 的差别只在默认值来源）。
+		return a.cmdOn(cmdArgs)
+	case "off":
+		// 菜单 `o` 的"关"：临时关闭，保留运行态与保活单元，随时可 on 回来。
+		return a.cmdOff(cmdArgs)
 	case "down":
 		return a.cmdDown(cmdArgs)
 	case "status":

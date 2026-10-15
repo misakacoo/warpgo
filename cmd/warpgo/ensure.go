@@ -76,6 +76,12 @@ type ensureOptions struct {
 	// 见 resolveBackends。实际用上的那个由 ensureTunnel 逐个尝试后确定。
 	Backend tunnel.Backend
 
+	// Stack 是隧道携带哪几族地址（上游菜单 `4` / `6` / `d`）。
+	//
+	// 空值表示"沿用上次的选择"（见 ensureTunnel 开头的继承逻辑），
+	// 于是 `watch` / `switch` / `rotate` 不必各自去读运行态。
+	Stack netcfg.Stack
+
 	// ProbeAfterEnsure：建好之后要不要立刻验证"经隧道真的能出网"。
 	//
 	// `up` 打开它（用户要的是"能用"，而且一旦不能用就该去试另一个后端）；
@@ -179,6 +185,19 @@ func backendLabel(be tunnel.Backend) string {
 // 只有"候选不止一个"时才会在成功之后多做一次体检 —— 单候选的机器
 // （也就是所有不带 reserved 的机器）行为与 M2/M4 完全一致，不多花一毫秒。
 func (a *app) ensureTunnel(ctx context.Context, acct *cloudflare.Account, opt ensureOptions) (*ensureResult, int) {
+	// 没显式指定栈就**沿用上次的选择**。
+	//
+	// 集中在这一处而不是让每个调用方自己填：`watch` 重建、`switch` 互换、
+	// `rotate` 换 IP 都会走到这里，任何一处漏了都会把用户选的"只用 IPv4"
+	// 悄悄改回双栈 —— 而那是很难发现的一类回归（隧道照样通，只是多了一族）。
+	if opt.Stack == "" {
+		if rt, err := state.LoadRuntime(state.RuntimePath()); err == nil {
+			opt.Stack = netcfg.Stack(rt.Stack).Normalize()
+		} else {
+			opt.Stack = netcfg.StackBoth
+		}
+	}
+
 	// auto 会沿用"现在跑着的那个后端"（见 resolveBackends 的第 4 条）。
 	// 读不到运行态（第一次运行、刚 down 过）就当没有偏好。
 	current := tunnel.BackendAuto
@@ -471,6 +490,10 @@ func buildTunnel(acct *cloudflare.Account, opt ensureOptions, be tunnel.Backend)
 	if err != nil {
 		return zeroCfg, nil, nil, err
 	}
+	addrs, err = applyStack(addrs, opt.Stack)
+	if err != nil {
+		return zeroCfg, nil, nil, err
+	}
 
 	endpoint := strings.TrimSpace(opt.Endpoint)
 	if endpoint == "" {
@@ -511,9 +534,48 @@ func buildTunnel(acct *cloudflare.Account, opt ensureOptions, be tunnel.Backend)
 		Families:         plan.Families,
 		Addrs:            plan.AddrStrings(),
 		Endpoint:         endpoint,
-		UpSince:          time.Now().UTC(),
+		// 栈要记下来：`watch` 重建、`switch` 互换、`rotate` 换 IP 都靠它
+		// 保持"用户选的只用 IPv4"不被悄悄改回双栈。
+		Stack: string(opt.Stack.Normalize()),
+		// 记下这次改过 DNS 没有 —— `off` / `on` 要靠它把解析器也一起还原。
+		DNS:     opt.DNS,
+		UpSince: time.Now().UTC(),
 	}
 	return cfg, plan, rtState, nil
+}
+
+// applyStack 按栈过滤账户地址（上游菜单 `4` / `6` / `d`）。
+//
+// 双栈时**原样返回同一个切片**：那是最常见的路径，不该被过滤逻辑碰到。
+func applyStack(addrs []netip.Prefix, stack netcfg.Stack) ([]netip.Prefix, error) {
+	stack = stack.Normalize()
+	if stack.Families() == nil {
+		return addrs, nil
+	}
+	out := make([]netip.Prefix, 0, len(addrs))
+	for _, a := range addrs {
+		if a.IsValid() && stack.Allows(netcfg.FamilyOfAddr(a.Addr())) {
+			out = append(out, a)
+		}
+	}
+	if len(out) == 0 {
+		// 说清"是账户里没有这一族"，而不是让 netcfg.Build 报一句
+		// "账户里没有任何接口地址" —— 后者会让人去查账户，而账户其实是好的。
+		return nil, fmt.Errorf("账户里没有 %s 的地址，装不了 --stack %s", stackFamilyName(stack), stack)
+	}
+	return out, nil
+}
+
+// stackFamilyName 把栈名说成人话（错误信息里用）。
+func stackFamilyName(stack netcfg.Stack) string {
+	switch stack.Normalize() {
+	case netcfg.StackV4:
+		return "IPv4"
+	case netcfg.StackV6:
+		return "IPv6"
+	default:
+		return "任何地址族"
+	}
 }
 
 // accountPrefixes 取出账户里的接口地址。

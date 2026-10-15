@@ -10,6 +10,7 @@ import (
 
 	"github.com/misakacoo/warpgo/internal/cloudflare"
 	"github.com/misakacoo/warpgo/internal/msg"
+	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/tunnel"
 )
@@ -26,6 +27,8 @@ type statusView struct {
 	MTU              int       `json:"mtu"`
 	Table            int       `json:"table"`
 	Families         []int     `json:"families,omitempty"`
+	// Stack 是隧道携带哪几族地址（both / 4 / 6，上游菜单 `4`/`6`/`d`）。
+	Stack            string    `json:"stack,omitempty"`
 	Addrs            []string  `json:"addresses,omitempty"`
 	Endpoint         string    `json:"endpoint,omitempty"`
 	UpSince          time.Time `json:"up_since"`
@@ -116,6 +119,7 @@ func newStatusView(rt *state.Runtime, st tunnel.Status, daemon bool, reserved st
 		MTU:              rt.MTU,
 		Table:            rt.Table,
 		Families:         rt.Families,
+		Stack:            netcfg.Stack(rt.Stack).Normalize().String(),
 		Addrs:            rt.Addrs,
 		Endpoint:         rt.Endpoint,
 		UpSince:          rt.UpSince,

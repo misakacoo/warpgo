@@ -246,5 +246,113 @@ if [ "$has4" = 1 ]; then
   probe_iface 4 "https://1.1.1.1/cdn-cgi/trace" "重新 up 后 IPv4 经隧道"
 fi
 
+section "7. off / on（临时开关，菜单 o）"
+
+RUNTIME=$ETC/runtime.json
+"$BIN" up >/dev/null 2>&1
+[ -f "$RUNTIME" ] && ok "up 之后有运行态文件" || bad "没有运行态文件"
+
+out=$("$BIN" off 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "off 退出码 0" || bad "off 退出码 $rc"
+case "$out" in
+  *"已保留运行态"*) ok "off 明确说明保留了运行态" ;;
+  *) bad "off 没说保留运行态" ;;
+esac
+[ -e "/sys/class/net/$IFACE" ] && bad "off 之后接口还在" || ok "off 之后接口已删除"
+has_rule 4 9000 && bad "off 之后 v4 规则还在" || ok "off 之后 v4 规则已清"
+has_rule 6 9000 && bad "off 之后 v6 规则还在" || ok "off 之后 v6 规则已清"
+default_is_native && ok "off 之后默认路由仍是原生" || bad "off 之后默认路由异常"
+
+# 这一条是 off 与 down 的**唯一**差别，也是最要紧的一条：
+# 没有它，on 就只能按账户默认重建，而不是"原样恢复"。
+[ -f "$RUNTIME" ] && ok "off **保留**了运行态（这正是它与 down 的差别）" \
+  || bad "off 把运行态删了 —— 那就退化成 down 了"
+
+out=$("$BIN" off 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "重复 off 退出码 0（幂等）" || bad "重复 off 退出码 $rc"
+
+out=$("$BIN" on 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "on 退出码 0" || bad "on 退出码 $rc"
+[ -e "/sys/class/net/$IFACE" ] && ok "on 之后接口回来了" || bad "on 之后接口没回来"
+has_rule 4 9000 && ok "on 之后 v4 规则回来了" || bad "on 之后 v4 规则没回来"
+default_is_native && ok "on 之后默认路由仍是原生" || bad "on 之后默认路由异常"
+if [ "$has4" = 1 ]; then
+  probe_iface 4 "https://1.1.1.1/cdn-cgi/trace" "on 之后 IPv4 经隧道"
+fi
+
+# "原样恢复"：模式与后端都该保持 off 之前的值。
+if [ -f "$RUNTIME" ]; then
+  mode_now=$(python3 -c "import json;print(json.load(open('$RUNTIME'))['mode'])")
+  [ "$mode_now" = "non-global" ] && ok "on 之后模式仍是 non-global（按运行态恢复）" \
+    || bad "on 之后模式变成了 $mode_now"
+  back_now=$(python3 -c "import json;print(json.load(open('$RUNTIME')).get('backend_requested',''))")
+  ok "运行态里记的 backend_requested = ${back_now:-（空）}"
+fi
+
+# down 与 off 的另一半差别：down 必须把运行态清掉。
+"$BIN" down >/dev/null 2>&1
+[ -f "$RUNTIME" ] && bad "down 之后运行态还在（down 的语义是零残留）" \
+  || ok "down 之后运行态已清掉"
+
+out=$("$BIN" on 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "没有运行态时 on 也能成功（退化成按账户默认建立）" || bad "没有运行态时 on 失败（rc=$rc）"
+default_is_native && ok "再次 on 之后默认路由仍是原生" || bad "再次 on 之后默认路由异常"
+
+
+section "8. --stack（隧道携带哪几族，上游菜单 4/6/d）"
+
+stack_of() { python3 -c "import json;print(json.load(open('$ETC/runtime.json')).get('stack',''))" 2>/dev/null; }
+# 只数**全局**地址：v6 上通常还挂着一个链路本地地址，数进去就永远对不上。
+v4_addrs() { ip -4 addr show "$IFACE" 2>/dev/null | grep -c "inet "; }
+v6_addrs() { ip -6 addr show "$IFACE" 2>/dev/null | grep "inet6 " | grep -c "scope global"; }
+
+if [ "$has4" = 1 ]; then
+  out=$("$BIN" up --stack 4 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && ok "--stack 4 退出码 0" || bad "--stack 4 失败（rc=$rc）"
+  [ "$(v4_addrs)" = "1" ] && ok "只用 IPv4 时接口上只有 v4 地址" || bad "v4 地址数=$(v4_addrs)"
+  [ "$(v6_addrs)" = "0" ] && ok "只用 IPv4 时接口上没有 v6 地址" || bad "v6 地址数=$(v6_addrs)"
+  has_rule 6 9000 && bad "只用 IPv4 时仍有 v6 规则" || ok "只用 IPv4 时没有 v6 规则"
+  has_rule 4 9000 && ok "只用 IPv4 时 v4 规则在" || bad "只用 IPv4 时 v4 规则不在"
+  [ "$(stack_of)" = "4" ] && ok "运行态记下了 stack=4" || bad "运行态里的 stack=$(stack_of)"
+  default_is_native && ok "只用 IPv4 时默认路由仍是原生" || bad "默认路由异常"
+  probe_iface 4 "https://1.1.1.1/cdn-cgi/trace" "只用 IPv4 时经隧道"
+
+  # 重建不该把栈改回双栈 —— 这是最难发现的一类回归
+  # （隧道照样通，只是悄悄多了一族）。
+  "$BIN" off >/dev/null 2>&1
+  "$BIN" on >/dev/null 2>&1
+  [ "$(stack_of)" = "4" ] && ok "off/on 一个来回后栈仍是 4" || bad "off/on 之后栈变成了 $(stack_of)"
+  [ "$(v6_addrs)" = "0" ] && ok "off/on 之后接口上仍没有 v6 地址" || bad "off/on 之后多出了 v6 地址"
+
+  "$BIN" watch --once >/dev/null 2>&1
+  [ "$(stack_of)" = "4" ] && ok "watch 一轮之后栈仍是 4（继承逻辑生效）" || bad "watch 之后栈变成了 $(stack_of)"
+fi
+
+if [ "$has6" = 1 ]; then
+  "$BIN" up --stack 6 >/dev/null 2>&1
+  [ "$(v4_addrs)" = "0" ] && ok "只用 IPv6 时接口上没有 v4 地址" || bad "v4 地址数=$(v4_addrs)"
+  [ "$(v6_addrs)" = "1" ] && ok "只用 IPv6 时接口上有 v6 地址" || bad "v6 地址数=$(v6_addrs)"
+fi
+
+out=$("$BIN" up --stack d 2>&1)
+case "$out" in
+  *"栈从"*) ok "切回双栈时日志说明了「栈变了所以要重建」" ;;
+  *) bad "切回双栈时没说为什么重建（静默重建会换一次出口 IP）" ;;
+esac
+[ "$(stack_of)" = "both" ] && ok "运行态记下 stack=both" || bad "运行态里的 stack=$(stack_of)"
+if [ "$has4" = 1 ] && [ "$has6" = 1 ]; then
+  [ "$(v4_addrs)" = "1" ] && [ "$(v6_addrs)" = "1" ] && ok "双栈时两族地址都在" \
+    || bad "双栈地址数 v4=$(v4_addrs) v6=$(v6_addrs)"
+fi
+default_is_native && ok "双栈时默认路由仍是原生" || bad "默认路由异常"
+
+out=$("$BIN" up --stack 5 2>&1); rc=$?
+[ "$rc" != "0" ] && ok "非法的栈取值被拒绝" || bad "非法栈取值居然成功了"
+case "$out" in
+  *"不认识的栈取值"*) ok "报错说清了取值不合法" ;;
+  *) bad "非法取值的报错不清楚" ;;
+esac
+
+
 printf '\n通过 %d 项，失败 %d 项\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
