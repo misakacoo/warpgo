@@ -58,9 +58,9 @@ func TestStackFamiliesAndAllows(t *testing.T) {
 	}
 
 	checks := []struct {
-		stack      Stack
-		fam        int
-		want       bool
+		stack Stack
+		fam   int
+		want  bool
 	}{
 		{StackBoth, FamilyV4, true},
 		{StackBoth, FamilyV6, true},
@@ -97,11 +97,11 @@ func TestStackNormalizeAndString(t *testing.T) {
 
 func TestFamilyOfAddr(t *testing.T) {
 	cases := map[string]int{
-		"172.16.0.2":         FamilyV4,
-		"10.0.0.1":           FamilyV4,
-		"2606:4700:110::1":   FamilyV6,
-		"::1":                FamilyV6,
-		"::ffff:172.16.0.2":  FamilyV6, // v4-mapped 在 netip 里算 v6，除非 Unmap
+		"172.16.0.2":        FamilyV4,
+		"10.0.0.1":          FamilyV4,
+		"2606:4700:110::1":  FamilyV6,
+		"::1":               FamilyV6,
+		"::ffff:172.16.0.2": FamilyV6, // v4-mapped 在 netip 里算 v6，除非 Unmap
 	}
 	for in, want := range cases {
 		a := mustAddr(t, in)

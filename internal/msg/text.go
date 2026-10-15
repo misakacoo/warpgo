@@ -136,7 +136,7 @@ var text = map[string]string{
 	KeyUpReasonNeedReserved: "需要 reserved 但当前后端不支持",
 	KeyUpReasonLockBusy:     "被单实例锁挡住",
 	KeyUpReasonNotDebian:    "不是 Debian 系统",
-	KeyUpStackRebuild: "栈从 %s 变成 %s —— 接口上原来那一族的地址不会自己消失，改为先拆后建",
+	KeyUpStackRebuild:       "栈从 %s 变成 %s —— 接口上原来那一族的地址不会自己消失，改为先拆后建",
 	KeyUpReasonError:        "执行出错",
 
 	KeyDownStart:   "正在拆除 WARP 隧道",

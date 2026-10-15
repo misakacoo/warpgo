@@ -23,19 +23,19 @@ type statusView struct {
 	// BackendRequested 是用户当初的要求（auto / kernel / userspace）。
 	// 它与 Backend 一起才能解释"为什么现在是用户态"：是用户指定的，
 	// 还是 auto 在内核不通时自己换过去的。
-	BackendRequested string    `json:"backend_requested,omitempty"`
-	MTU              int       `json:"mtu"`
-	Table            int       `json:"table"`
-	Families         []int     `json:"families,omitempty"`
+	BackendRequested string `json:"backend_requested,omitempty"`
+	MTU              int    `json:"mtu"`
+	Table            int    `json:"table"`
+	Families         []int  `json:"families,omitempty"`
 	// Stack 是隧道携带哪几族地址（both / 4 / 6，上游菜单 `4`/`6`/`d`）。
-	Stack            string    `json:"stack,omitempty"`
-	Addrs            []string  `json:"addresses,omitempty"`
-	Endpoint         string    `json:"endpoint,omitempty"`
-	UpSince          time.Time `json:"up_since"`
-	Exists           bool      `json:"interface_exists"`
-	WGPublic         string    `json:"wg_public_key,omitempty"`
-	WGPort           int       `json:"wg_listen_port,omitempty"`
-	Handshaked       bool      `json:"handshaked"`
+	Stack      string    `json:"stack,omitempty"`
+	Addrs      []string  `json:"addresses,omitempty"`
+	Endpoint   string    `json:"endpoint,omitempty"`
+	UpSince    time.Time `json:"up_since"`
+	Exists     bool      `json:"interface_exists"`
+	WGPublic   string    `json:"wg_public_key,omitempty"`
+	WGPort     int       `json:"wg_listen_port,omitempty"`
+	Handshaked bool      `json:"handshaked"`
 	// DaemonRunning 只在用户态后端下有意义。
 	DaemonRunning bool `json:"userspace_daemon_running,omitempty"`
 	// Reserved 是账户里那 3 个字节（内核后端发的是 0,0,0）。
