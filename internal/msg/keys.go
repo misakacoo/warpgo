@@ -340,6 +340,15 @@ const (
 	KeyMenuInstallWatch  = "menu.install_watch"
 	KeyMenuUninstall     = "menu.uninstall"
 
+	// 菜单顶部那行状态摘要（M8，纯本地读取，不联网）
+	KeyMenuStatusUp        = "menu.status_up"
+	KeyMenuStatusDown      = "menu.status_down"
+	KeyMenuStatusMode      = "menu.status_mode"
+	KeyMenuStatusBackend   = "menu.status_backend"
+	KeyMenuStatusAddrs     = "menu.status_addrs"
+	KeyMenuStatusAccount   = "menu.status_account"
+	KeyMenuStatusNoAccount = "menu.status_no_account"
+
 	// 总卸载的客户端联动（M8）
 	KeyUninstallClient = "uninstall.client_removed"
 
@@ -640,6 +649,13 @@ func AllKeys() []string {
 		KeyMenuProxyToggle,
 		KeyMenuInstallWatch,
 		KeyMenuUninstall,
+		KeyMenuStatusUp,
+		KeyMenuStatusDown,
+		KeyMenuStatusMode,
+		KeyMenuStatusBackend,
+		KeyMenuStatusAddrs,
+		KeyMenuStatusAccount,
+		KeyMenuStatusNoAccount,
 		KeyUninstallClient,
 		KeyVerCheckFailed,
 		KeyVerNoCompare,

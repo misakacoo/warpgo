@@ -37,33 +37,34 @@
 
 ## 2. 功能矩阵（逐项对照现有菜单）
 
-| 菜单项                                | 现有实现                                     | Go 模块                      | 里程碑                 | 备注                                                                                                           |
-| ---------------------------------- | ---------------------------------------- | -------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `4` `6` `d` 装接口/切栈                 | `install()` + `stack_switch()`           | `netcfg` + `tunnel`        | **M2**              | 已装则变为"切栈"（改 AllowedIPs 注释）                                                                                   |
-| `o` 临时开关                           | `onoff()`                                | `cli` + `netcfg`           | M2                  | 关 = 拆接口但保留配置；开 = `up --force`                                                                                |
-| `n` 获取 IP / 重连                     | `net()`（199 行）                           | `health` + `keepalive`     | ✅ M2/M4             | **新语义**：默认先体检，健康不动；`--force` 才重建。保活即 `watch`（M4）                                                             |
-| `i` 换 IP（Netflix）                  | `change_ip()`（214 行）                     | `cloudflare` + `netcfg`    | ✅ **M5**            | 重新注册换出口；**不做**流媒体解锁探测（见 §8.16）                                                                               |
-| `g` 全局/非全局切换                       | `working_mode_switch()`                  | `netcfg.route` + `switch`  | ✅ M3/M5             | 要连路由一起换，不是只改注释                                                                                               |
-| `k` 内核↔用户态                         | `kernel_reserved_switch()`               | `tunnel` + `userspace`     | ✅ **M5**            | 同一套实现对两种后端；见 §8.2                                                                                            |
-| `s 4/6/d` 栈优先级                     | `stack_priority()` + `result_priority()` | `gai` + `cli.priority`     | ✅ **M6**            | 只写 `/etc/gai.conf` 里那两行；**实测** `4` 生效、`6` 与默认等价，见 §8.8                                                       |
-| `u` 卸载                             | `uninstall()`（93 行）                      | `cmd/uninstall.go`         | ✅ **M4**（DNS 还原已实测） | 见 §8.13 的"必须还原清单"                                                                                            |
-| `v` 版本/同步                          | `ver()` + `check_cdn()`                  | `cli.version` + `update`   | ✅ **M9**            | Go 版无"同步脚本"，改为查新版本 + 可选自更新（§8.14）                                                                           |
-| ~~`b` 升级内核 + BBR~~                 | `bbrInstall()`                            | —                          | —                   | **已确认砍掉**（2026-10-15，§3）：与"拿到 WARP 出口"无关，且会自动改内核参数                                                                     |
-| ~~`b` 里的 DD 重装系统~~                 | `bbrInstall()` 内                         | —                          | —                   | **已确认不编入**（§14.1）                                                                                            |
-| ~~`e` 分流（iptables+dnsmasq+ipset）~~ | `iptables_solution()`（129 行）+ 配置         | —                          | —                   | **已确认砍掉**（2026-10-15，§3）：上游那段还带一个 P0 级 bug，且与"拿到出口"无关                                                        |
-| `w` WireProxy 方案                   | `wireproxy_solution()`                   | `proxy`                    | ✅ **M7**            | 引入第三方 `wireproxy` 二进制（**下载 + 强制校验和**），见 §8.9                                                                 |
-| `y` WireProxy 开关                   | `wireproxy_onoff()`                      | `proxy`                    | ✅ **M7**            | 开之后**经 socks5 实测** warp=on 才算成功                                                                              |
-| `c` 官方 Client → socks5             | `client_install()`（137 行）                | `cfclient`                 | ✅ **M8**            | 依赖 Cloudflare 官方 `.deb`；**默认模式**（只开本地 socks5）                                                                |
-| `l` 官方 Client → WARP 模式            | `client_install()`                       | `cfclient`                 | ✅ **M8**            | 会接管默认路由、可能切断 SSH，动手前明确警告（§8.10）                                                                              |
-| `r` Client 开关                      | `client_onoff()`                         | `cfclient`                 | ✅ **M8**            |                                                                                                              |
-| `z` / `x` 隐藏命令                     | `rule_add` / `rule_del`                  | `cfclient.HookAdd/HookDel` | ✅ **M8**            | 供 `warp-svc` 的 ExecStartPost/ExecStop 调用；用 drop-in 挂载                                                        |
-| 交互菜单（裸 `warp`）                     | `menu()`                                 | `cmd/warpgo/menu.go`       | ✅ **M8**            | 薄封装：每个选项就是一条子命令                                                                                              |
-| `h` 帮助                             | `help()` + E[6]/C[6]                     | `cli.help`                 | M2                  | 随功能逐步补全                                                                                                      |
-| 菜单内状态显示                            | `check_system_info()` + `menu()`         | `health` + `cli.menu`      | M2                  | IPv4/IPv6 / 模式 / 内核 / 账户类型                                                                                   |
-| ~~语言选择~~                           | `select_language()` + 141 条文案            | `msg`                      | —                   | **中英双语已移除**（2026-10-15）：只保留简体中文，见 §8.15                                                                      |
-| 账户 / license / 设备                  | `api.sh` 的 account 子命令                   | —                          | —                   | **已确认砍掉**（2026-10-15）：WARP+ 绑定、设备列表、改名、注销都不做；`warpgo account` 只留一个纯本地的只读视图。唯一保留的设备管理动作是 `rotate` 内部给自己的旧设备收尾 |
-| ~~Team 令牌注册~~                      | `api.sh` 的 Teams OAuth 流程                | —                          | —                   | **已确认砍掉**（§14.2）                                                                                             |
-| ~~运行次数统计~~                         | `statistics_of_run-times()`              | —                          | —                   | **已确认砍掉**（2026-10-15，§8.14）：不做远程上报，**也不做本地计数**                                                               |
+对照的是上游 `warp` 的菜单。**已经明确砍掉的功能不再列在这张表里** —— 它们都在
+§3「明确不做」里，留在这里只会让"还剩什么没做"看不清。这张表的用途是
+"每一项功能落在哪个模块、哪个里程碑交付"。
+
+| 菜单项                              | 现有实现                                     | Go 模块                      | 里程碑                  | 备注                                                                                     |
+| -------------------------------- | ---------------------------------------- | -------------------------- | -------------------- | -------------------------------------------------------------------------------------- |
+| `4` `6` `d` 装接口/切栈               | `install()` + `stack_switch()`           | `netcfg` + `tunnel`        | ✅ **M2**             | 已装则变为"切栈"（改 AllowedIPs 注释）                                                               |
+| `o` 临时开关                         | `onoff()`                                | 并入 `up` / `down`           | ✅ **M2**             | **不单设子命令**：关 = `down`（要留住保活用 `--keep-watch`），开 = `up`；账户与配置始终保留                                  |
+| `n` 获取 IP / 重连                   | `net()`（199 行）                           | `health` + `keepalive`     | ✅ **M2/M4**          | **新语义**：默认先体检，健康不动；`--force` 才重建。保活即 `watch`（M4）                                        |
+| `i` 换 IP（Netflix）                | `change_ip()`（214 行）                     | `cloudflare` + `netcfg`    | ✅ **M5**             | 重新注册换出口；**不做**流媒体解锁探测（见 §8.16）                                                          |
+| `g` 全局/非全局切换                     | `working_mode_switch()`                  | `netcfg.route` + `switch`  | ✅ **M3/M5**          | 要连路由一起换，不是只改注释                                                                         |
+| `k` 内核↔用户态                       | `kernel_reserved_switch()`               | `tunnel` + `userspace`     | ✅ **M5**             | 同一套实现对两种后端；见 §8.2                                                                      |
+| `s 4/6/d` 栈优先级                   | `stack_priority()` + `result_priority()` | `gai` + `cli.priority`     | ✅ **M6**             | 只写 `/etc/gai.conf` 里那两行；**实测** `4` 生效、`6` 与默认等价，见 §8.8                                     |
+| `u` 卸载                           | `uninstall()`（93 行）                      | `cmd/uninstall.go`         | ✅ **M4**（DNS 还原已实测）  | 见 §8.13 的"必须还原清单"                                                                      |
+| `v` 版本/同步                        | `ver()` + `check_cdn()`                  | `cli.version` + `update`   | ✅ **M9**             | Go 版无"同步脚本"，改为查新版本 + 可选自更新（§8.14）                                                       |
+| `w` WireProxy 方案                 | `wireproxy_solution()`                   | `proxy`                    | ✅ **M7**             | 引入第三方 `wireproxy` 二进制（**下载 + 强制校验和**），见 §8.9                                             |
+| `y` WireProxy 开关                 | `wireproxy_onoff()`                      | `proxy`                    | ✅ **M7**             | 开之后**经 socks5 实测** warp=on 才算成功                                                        |
+| `c` 官方 Client → socks5           | `client_install()`（137 行）                | `cfclient`                 | ✅ **M8**             | 依赖 Cloudflare 官方 `.deb`；**默认模式**（只开本地 socks5）                                           |
+| `l` 官方 Client → WARP 模式          | `client_install()`                       | `cfclient`                 | ✅ **M8**             | 会接管默认路由、可能切断 SSH，动手前明确警告（§8.10）                                                         |
+| `r` Client 开关                    | `client_onoff()`                         | `cfclient`                 | ✅ **M8**             |                                                                                        |
+| `z` / `x` 隐藏命令                   | `rule_add` / `rule_del`                  | `cfclient.HookAdd/HookDel` | ✅ **M8**             | 供 `warp-svc` 的 ExecStartPost/ExecStop 调用；用 drop-in 挂载                                    |
+| 交互菜单（裸 `warp`）                   | `menu()`                                 | `cmd/warpgo/menu.go`       | ✅ **M8**             | 薄封装：每个选项就是一条子命令                                                                        |
+| `h` 帮助                           | `help()` + E[6]/C[6]                     | `cli.help`                 | ✅ **M2**（随功能补全）      | `warpgo help` 覆盖全部子命令                                                                   |
+| 账户（只读）                           | `api.sh` 的 account 子命令                   | `cloudflare` + `cmd/account.go` | ✅ **M1**        | **只留纯本地只读视图**；WARP+ 绑定 / 设备列表 / 改名 / 注销已砍掉（§8.7）                                         |
+| 菜单内状态显示                          | `check_system_info()` + `menu()`         | `cmd/warpgo/menu.go`       | ✅ **M8**             | 菜单顶部一行状态：隧道 / 模式 / 后端 / 地址 / 账户类型。**纯本地读取**（运行态 + 账户文件），不联网、不探测                        |
+
+这一张表现在**全部打勾**。`o` 与"菜单内状态显示"两行原先没有 ✅：
+前者是被 `up`/`down` 覆盖了（不单设子命令），后者当时确实漏做了 —— 2026-10-15 补上。
 
 ---
 

@@ -398,6 +398,15 @@ install 的选项:
 	KeyMenuInstallWatch:  "保活：装成 systemd 服务",
 	KeyMenuUninstall:     "卸载 warpgo",
 
+	// 菜单顶部那行状态摘要
+	KeyMenuStatusUp:        "隧道 %s",
+	KeyMenuStatusDown:      "隧道未建立",
+	KeyMenuStatusMode:      "模式 %s",
+	KeyMenuStatusBackend:   "后端 %s",
+	KeyMenuStatusAddrs:     "地址 %s",
+	KeyMenuStatusAccount:   "账户 %s",
+	KeyMenuStatusNoAccount: "未注册",
+
 	// 总卸载的客户端联动（M8）
 	KeyUninstallClient: "已一并撤销官方 Linux Client（菜单 c / l 装的那套）",
 

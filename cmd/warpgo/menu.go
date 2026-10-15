@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/misakacoo/warpgo/internal/cfclient"
+	"github.com/misakacoo/warpgo/internal/cloudflare"
 	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/proxy"
 	"github.com/misakacoo/warpgo/internal/state"
@@ -91,14 +92,55 @@ func menuEntries() []menuEntry {
 }
 
 // printMenu 打印菜单。
+//
+// 顶部先给一行系统状态 —— 上游的菜单也是这样：菜单的用途就是"看一眼现在是什么状态、
+// 再决定按哪个键"，所以状态不该要人再敲一次 `status` 才看得到。
+//
+// 这一行**只读本机的运行态与账户文件**：不联网、不做探测、不改任何东西。
+// 打开菜单是个纯观察动作，不该有副作用（因此在断网时也照样能看）。
 func (a *app) printMenu() {
 	fmt.Fprintln(a.stdout)
 	fmt.Fprintln(a.stdout, msg.T(msg.KeyMenuTitle))
+	fmt.Fprintf(a.stdout, "  %s\n", a.menuStatusLine())
+	fmt.Fprintln(a.stdout)
 	for _, e := range menuEntries() {
 		fmt.Fprintf(a.stdout, "  %2s) %s\n", e.choice, msg.T(e.label))
 	}
 	fmt.Fprintf(a.stdout, "   %s) %s\n", "0", msg.T(msg.KeyMenuQuit))
 	fmt.Fprintln(a.stdout)
+}
+
+// menuStatusLine 拼出菜单顶部那一行状态摘要。
+//
+// 每一项都独立容错：没有运行态就是"隧道没起来"（菜单最常见的起点，不是错误），
+// 没有账户就是"未注册"。两者都不该让菜单打不开 —— 恰恰相反，
+// 这两种情况正是用户最需要看到菜单的时候。
+func (a *app) menuStatusLine() string {
+	var parts []string
+
+	rt, err := state.LoadRuntime(state.RuntimePath())
+	if err != nil || rt.IfName == "" {
+		parts = append(parts, msg.T(msg.KeyMenuStatusDown))
+	} else {
+		parts = append(parts, msg.Tf(msg.KeyMenuStatusUp, rt.IfName))
+		if rt.Mode != "" {
+			parts = append(parts, msg.Tf(msg.KeyMenuStatusMode, rt.Mode))
+		}
+		if rt.Backend != "" {
+			parts = append(parts, msg.Tf(msg.KeyMenuStatusBackend, rt.Backend))
+		}
+		if len(rt.Addrs) > 0 {
+			parts = append(parts, msg.Tf(msg.KeyMenuStatusAddrs, strings.Join(rt.Addrs, " ")))
+		}
+	}
+
+	acct, err := cloudflare.LoadAccount(state.AccountPath())
+	if err != nil {
+		parts = append(parts, msg.T(msg.KeyMenuStatusNoAccount))
+	} else {
+		parts = append(parts, msg.Tf(msg.KeyMenuStatusAccount, joinOrDash(acct.AccountType)))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // menuArgv 把选项翻译成一条子命令。返回 (argv, ok)；
