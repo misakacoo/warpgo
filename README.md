@@ -15,7 +15,7 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M0 | 骨架、单实例锁、文案、日志 | ✅ 完成 |
-| M1 | 注册 / reserved / profile 生成 | ✅ 完成（真机 39/39） |
+| M1 | 注册 / reserved / profile 生成 | ✅ 完成（真机 39/39；已有账户时跳过注册段 → 33/33） |
 | M2 | 内核后端 + 非全局出口 + up/down/status | ✅ 完成（真机 38/38） |
 | M3 | 全局模式 + fwmark 防环路 + watchdog 回滚 | ✅ 完成（真机 34/34） |
 | M4 | 体检 + 保活 + systemd + 卸载 | ✅ 完成（真机 69/69） |
@@ -23,7 +23,7 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 | M6 | 地址族优先级（菜单 s） | ✅ 完成（真机 30/30） |
 | M7 | WireProxy（菜单 w / y）—— 本地 socks5 出口 | ✅ 完成（真机 84/84） |
 | M8 | 官方 Linux Client（c/l/r/z/x）+ 交互菜单 | ✅ 完成（真机 76/76） |
-| M9 | 版本自更新 + 打包（`b` BBR / 内核升级已砍） | ✅ 完成（真机 39/39） |
+| M9 | 版本自更新 + 打包（`b` BBR / 内核升级已砍） | ✅ 完成（真机 42/42） |
 
 **明确不做**（见 [docs/DESIGN.md](docs/DESIGN.md) §3）：
 
@@ -377,7 +377,7 @@ tests/e2e/m5-userspace.sh              # M5 真机验收（用户态后端 + 抓
 tests/e2e/m6-priority.sh               # M6 真机验收（gai.conf 三态 + getent 实测顺序，30 项）
 tests/e2e/m7-proxy.sh                  # M7 真机验收（真实下载 + socks5 实测 + 零残留，84 项）
 tests/e2e/m8-client.sh                 # M8 真机验收（真实装包 + 钩子 + 菜单，76 项）
-tests/e2e/m9-update.sh                 # M9 真机验收（版本查询 + 打包产物 + 真实自更新，39 项）
+tests/e2e/m9-update.sh                 # M9 真机验收（版本查询 + 打包产物 + 真实自更新，42 项）
 ```
 
 `m5-userspace.sh` 会**真的在两套后端之间来回切换**、**真的重新注册一个新账户**

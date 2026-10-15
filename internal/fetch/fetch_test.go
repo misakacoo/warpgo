@@ -37,13 +37,13 @@ func TestPathBase(t *testing.T) {
 
 func TestFirstLine(t *testing.T) {
 	cases := map[string]string{
-		"a\nb\nc":     "a",
-		"a":           "a",
-		"a\n":         "a",
-		"  a  \n b":   "a",
-		"":            "",
-		"\n":          "",
-		"a\r\nb":      "a",
+		"a\nb\nc":      "a",
+		"a":            "a",
+		"a\n":          "a",
+		"  a  \n b":    "a",
+		"":             "",
+		"\n":           "",
+		"a\r\nb":       "a",
 		"warpgo 0.1.0": "warpgo 0.1.0",
 	}
 	for in, want := range cases {

@@ -47,7 +47,7 @@
 | `k` 内核↔用户态                         | `kernel_reserved_switch()`               | `tunnel` + `userspace`     | ✅ **M5**            | 同一套实现对两种后端；见 §8.2                                                                                            |
 | `s 4/6/d` 栈优先级                     | `stack_priority()` + `result_priority()` | `gai` + `cli.priority`     | ✅ **M6**            | 只写 `/etc/gai.conf` 里那两行；**实测** `4` 生效、`6` 与默认等价，见 §8.8                                                       |
 | `u` 卸载                             | `uninstall()`（93 行）                      | `cmd/uninstall.go`         | ✅ **M4**（DNS 还原已实测） | 见 §8.13 的"必须还原清单"                                                                                            |
-| `v` 版本/同步                          | `ver()` + `check_cdn()`                  | `cli.version`              | M9                  | Go 版无"同步脚本"，改为查新版本 + 可选自更新                                                                                   |
+| `v` 版本/同步                          | `ver()` + `check_cdn()`                  | `cli.version` + `update`   | ✅ **M9**            | Go 版无"同步脚本"，改为查新版本 + 可选自更新（§8.14）                                                                           |
 | ~~`b` 升级内核 + BBR~~                 | `bbrInstall()`                            | —                          | —                   | **已确认砍掉**（2026-10-15，§3）：与"拿到 WARP 出口"无关，且会自动改内核参数                                                                     |
 | ~~`b` 里的 DD 重装系统~~                 | `bbrInstall()` 内                         | —                          | —                   | **已确认不编入**（§14.1）                                                                                            |
 | ~~`e` 分流（iptables+dnsmasq+ipset）~~ | `iptables_solution()`（129 行）+ 配置         | —                          | —                   | **已确认砍掉**（2026-10-15，§3）：上游那段还带一个 P0 级 bug，且与"拿到出口"无关                                                        |
@@ -806,7 +806,7 @@ warpgo 要做的是"拿到 WARP 出口并保持它可用"，而 BBR 改的是全
 | `/usr/bin/warp`                      | 已删                                                          | `/usr/bin/warpgo`                                                                                                                                                               |
 | ipset / dnsmasq 配置                   | 已清                                                          | 同                                                                                                                                                                               |
 | **`/etc/resolv.conf`**               | ⚠️ **仍是 `nameserver 1.1.1.1`，且 `resolv.conf.origin` 备份已被删** | ✅ **M4 已实现**：`up --dns` 才改它（默认不碰）；改前备份到 `/etc/warpgo/resolv.conf.origin`，**第一次写入后不再被覆盖**；`down` / `uninstall` 还原并只在还原成功后删备份；`/etc/resolv.conf` 若是符号链接则拒绝改写（systemd-resolved 机器） |
-| BBR sysctl                           | 保留（合理，无害）                                                   | 保留但提示                                                                                                                                                                           |
+| BBR sysctl                           | 保留（合理，无害）                                                   | **不编入**：warpgo 不碰 BBR（§3 / §8.11），机器上现有的设置原样保留                                                                                                                                    |
 | 调试备份文件（`*.bak-*`）                    | 留在 `/etc/wireguard/`（14 个）                                  | 测试残留由 M0 统一移到 `/root/warp-old-backup/`                                                                                                                                          |
 
 幂等要求：`up` 连跑 3 次规则数不变；`down` 后零残留；`install` 可重复执行；
@@ -1069,7 +1069,7 @@ WantedBy=multi-user.target
 | #      | 内容                                              | 验收（真机 Debian 12）                                                                        |
 | ------ | ----------------------------------------------- | --------------------------------------------------------------------------------------- |
 | **M0** | 骨架 + 状态/锁/文案/日志 + 把调试残留移走                       | `warpgo version` 能跑；单实例锁三种行为（占用提示 / 心跳 / 接管）单测过                                         |
-| **M1** | `cloudflare` + `wgconf`：注册、reserved、profile     | ✅ **完成**（2026-10-14）：真机验收 **39/39**，见下方                                                 |
+| **M1** | `cloudflare` + `wgconf`：注册、reserved、profile     | ✅ **完成**（2026-10-14）：真机验收 **39/39**（已有账户时跳过注册那一段 → **33/33**），见下方                                                 |
 | **M2** | `tunnel`(内核) + `netcfg` 非全局 + `up/down/status`  | ✅ **完成**（2026-10-14）：真机 **38/38** —— 见下方（菜单骨架未做，挪到功能齐了之后单独做）                            |
 | **M3** | 全局模式 + fwmark 防环路 + watchdog 回滚                 | ✅ **完成**（2026-10-14）：真机 **32/32** —— 见下方                                                |
 | **M4** | `health` + `keepalive` + systemd + **卸载**       | ✅ **完成**（2026-10-14）：真机 **70/70** —— 见下方                                                |
@@ -1346,6 +1346,12 @@ WantedBy=multi-user.target
 ---
 
 ## 12. 测试策略
+
+**构建**：`./build.sh`（本机 → `dist/warpgo`）与 `./build.sh release`
+（发布产物：两个架构的 tar.gz + `checksums.txt`）。
+工具链版本以 `go.mod` 为准（当前 **go 1.26** —— `golang.org/x/mod` 要求它）；
+CI 用 `actions/setup-go` 的 `go-version-file: go.mod`，本地与 CI 用同一个 Go，
+少一类"只有 CI 才复现"的问题。
 
 ### 单元（无 root、无网络）
 
