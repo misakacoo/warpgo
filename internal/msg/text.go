@@ -33,10 +33,16 @@ var text = map[string]string{
 
 其他:
   menu                 交互菜单（每个选项就是一条子命令）
-  version              显示版本信息（--check 会去 GitHub 查新版本）
+  version              显示版本信息；--check 查新版本，--self-update 自我更新
   help                 显示本帮助
   dev lock             演练单实例锁（开发调试用）
   dev platform         检查本机是否 Debian
+
+版本与更新:
+  --check              查 GitHub 上有没有新版本（只读；落后不算错误）
+  --self-update        下载并替换自己（--force 重装，--version vX.Y.Z 指定版本）
+  --repo / --api-base / --base
+                       覆盖发布仓库与 API / 下载前缀（镜像或自建发布页）
 
 常用选项:
   --backend auto|kernel|userspace
@@ -382,4 +388,35 @@ install 的选项:
 	KeyMenuRotate:        "换一个出口 IP（重新注册）",
 	KeyMenuSwitchBackend: "在线互换后端（内核 ↔ 用户态）",
 	KeyMenuSwitchMode:    "在线互换工作模式（非全局 ↔ 全局）",
-	KeyMenuPrio
+	KeyMenuPriority:      "地址族优先级",
+	KeyMenuClientProxy:   "官方客户端：安装为 socks5 代理",
+	KeyMenuClientWarp:    "官方客户端：安装为 WARP 模式",
+	KeyMenuClientToggle:  "官方客户端：开关",
+	KeyMenuClientStatus:  "官方客户端：状态",
+	KeyMenuProxyInstall:  "WireProxy：安装",
+	KeyMenuProxyToggle:   "WireProxy：开关",
+	KeyMenuInstallWatch:  "保活：装成 systemd 服务",
+	KeyMenuUninstall:     "卸载 warpgo",
+
+	// 总卸载的客户端联动（M8）
+	KeyUninstallClient: "已一并撤销官方 Linux Client（菜单 c / l 装的那套）",
+
+	// 版本与自更新（M9）
+	KeyVerCheckFailed: "查询新版本失败: %v",
+	KeyVerNoCompare: "当前版本是 %s（开发构建，没有版本号），没法与最新发布 %s 比较；" +
+		"要装最新版请用 `warpgo version --self-update --force`",
+	KeyVerNewer:        "有新版本：%s（当前 %s）",
+	KeyVerUpdateHint:   "升级：`warpgo version --self-update`",
+	KeyVerUpToDate:     "已是最新（当前 %s，最新发布 %s）",
+	KeyVerReleasePage:  "发布页: %s",
+	KeyVerNoSelfPath:   "拿不到自己的可执行文件路径",
+	KeyVerUpdateStart:  "正在检查更新（当前 %s）…",
+	KeyVerUpdateFailed: "更新失败: %v",
+	KeyVerNoChange:     "没有变化（当前 %s，目标 %s）—— 想强制重装就用 `--force`",
+	KeyVerForceHint:    "提示：`--force` 可以重装同一个版本，`--version vX.Y.Z` 可以装指定版本",
+	KeyVerUpdateDone:   "已更新到 %s（%s，sha256 %s）",
+	KeyVerNoRestart:    "--no-restart：没有重启保活服务（它仍在跑旧的那份可执行文件）",
+	KeyVerRestartFailed: "更新已完成，但重启保活服务失败: %v\n" +
+		"（新版本已就位，下次重启服务时会用上；也可以手工 `systemctl restart warpgo-watch`）",
+	KeyVerRestarted: "已重启 %s，它现在跑的是新版本",
+}

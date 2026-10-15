@@ -1,0 +1,46 @@
+name: release
+
+# 打一个 `vX.Y.Z` 的 tag 就发布：构建两个架构、出 checksums.txt、挂到 Release 上。
+#
+# 刻意**不做**"每次 push 到 main 就构建"：这个项目没有 CI 产物消费方，
+# 而"顺手构建"只会让 Actions 里堆一堆没人看的产物。发布是一个显式动作。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  # softprops/action-gh-release 要写 Release，所以需要 contents: write。
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # 版本以 go.mod 为准 —— 本地与 CI 用同一个 Go，少一类"只有 CI 才复现"的问题。
+          go-version-file: go.mod
+
+      # 先跑单测：一个测试都不过的 tag 不该产出发布产物。
+      # 真机验收（tests/e2e/*.sh）不在这里跑 —— 它们要 root、要真的改网络。
+      - name: 单元测试
+        run: |
+          gofmt -l . | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+          go vet ./...
+          go test ./...
+
+      - name: 构建发布产物
+        run: TAG="${GITHUB_REF_NAME}" ./build.sh release
+
+      - name: 发布
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/release/*.tar.gz
+            dist/release/checksums.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true

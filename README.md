@@ -10,7 +10,7 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 
 ## 状态
 
-按里程碑推进。当前：**M8 完成（官方 Linux Client + 钩子 + 交互菜单）**
+按里程碑推进。当前：**M9 完成（版本自更新 + 打包）—— 全部里程碑走完**
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
@@ -23,14 +23,18 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 | M6 | 地址族优先级（菜单 s） | ✅ 完成（真机 30/30） |
 | M7 | WireProxy（菜单 w / y）—— 本地 socks5 出口 | ✅ 完成（真机 84/84） |
 | M8 | 官方 Linux Client（c/l/r/z/x）+ 交互菜单 | ✅ 完成（真机 76/76） |
-| M9 | BBR + 版本自更新 + 打包 | 未开始 |
+| M9 | 版本自更新 + 打包（`b` BBR / 内核升级已砍） | ✅ 完成（真机 39/39） |
 
 **明确不做**（见 [docs/DESIGN.md](docs/DESIGN.md) §3）：
 
 - 账户 / license / 设备管理（WARP+ 绑定、设备列表、改名、注销）—— `warpgo account` 只留一个纯本地只读视图
 - `e` 分流（iptables + dnsmasq + ipset）
+- **`b`：BBR 与内核升级** —— 它们改的是**机器本身**（全局 `sysctl` / 内核包），
+  与"拿到 WARP 出口"没有关系，却是这台机器上风险最高的一类操作。要开 BBR 自己写一行
+  `sysctl` 就够了，不该由这个工具代劳
 - **运行次数统计**：不做远程上报，**也不做本地计数**。除了你显式要求的那几条路
-  （`version --check`、`rotate`、`proxy install` 的下载），warpgo 不会主动联外网
+  （`version --check` / `--self-update`、`rotate`、`proxy install` / `client install` 的下载），
+  warpgo 不会主动联外网
 
 ## 用法（M1 已可用）
 
@@ -289,6 +293,41 @@ sudo ./dist/warpgo menu
 好处是菜单与命令行走**同一条代码路径**（不会出现"命令行能修好、菜单修不好"），
 而且每一项都能被脚本复现 —— 把菜单里的命令抄下来就是那条命令。
 
+## 查新版本与自我更新（M9 已可用，菜单 v）
+
+```bash
+sudo ./dist/warpgo version                       # 本地版本信息（只读）
+sudo ./dist/warpgo version --check               # 查 GitHub 最新发布并比较
+sudo ./dist/warpgo version --self-update         # 下载 + 校验和 + 替换自己
+sudo ./dist/warpgo version --self-update --force            # 重装同一个版本
+sudo ./dist/warpgo version --self-update --version v0.2.0   # 装指定版本
+sudo ./dist/warpgo version --self-update --no-restart       # 不重启保活服务
+```
+
+自我更新与 `proxy install` 走的是**同一套**下载 / 校验 / 替换原语：
+
+- **先把校验和定下来，再下载** —— 顺序反了就有"清单取不到时先装上去再说"的诱惑，
+  而那等于静默降级成不校验；
+- **在临时文件上先跑一次 `version`，确认它能执行，最后才 rename** ——
+  所以任何一步失败时，**磁盘上那个正在用的 warpgo 一个字节都没动**。
+  把工具自己更新坏了，用户就没有工具可用了，这是最要紧的一条；
+- 更新完若保活服务在跑就**重启它**（进程起来时已经把旧的那份可执行文件映射好了，
+  不重启等于"更新了但没生效"）；`--no-restart` 可以跳过。
+
+`--check` 的退出码始终是 0（查询成功）/ 1（查询失败）—— "落后了"不算错误，它写在输出里。
+
+## 打包与发布（M9）
+
+```bash
+./build.sh                 # 只为本机构建 → dist/warpgo
+TAG=v0.2.0 ./build.sh release   # 交叉编译 amd64 + arm64 → tar.gz + checksums.txt
+```
+
+打一个 `vX.Y.Z` 的 tag 并推送，`.github/workflows/release.yml` 会自动跑
+`gofmt` / `go vet` / `go test`，然后构建两个架构并挂到 GitHub Release 上
+（含 `checksums.txt`）。**资产名与自更新找文件用的名字是同一套规则**，
+所以"发布出来的"就是"能自动装上的"。
+
 ## 卸载（M4 已可用）
 
 ```bash
@@ -338,6 +377,7 @@ tests/e2e/m5-userspace.sh              # M5 真机验收（用户态后端 + 抓
 tests/e2e/m6-priority.sh               # M6 真机验收（gai.conf 三态 + getent 实测顺序，30 项）
 tests/e2e/m7-proxy.sh                  # M7 真机验收（真实下载 + socks5 实测 + 零残留，84 项）
 tests/e2e/m8-client.sh                 # M8 真机验收（真实装包 + 钩子 + 菜单，76 项）
+tests/e2e/m9-update.sh                 # M9 真机验收（版本查询 + 打包产物 + 真实自更新，39 项）
 ```
 
 `m5-userspace.sh` 会**真的在两套后端之间来回切换**、**真的重新注册一个新账户**

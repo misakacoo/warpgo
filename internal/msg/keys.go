@@ -342,6 +342,23 @@ const (
 
 	// 总卸载的客户端联动（M8）
 	KeyUninstallClient = "uninstall.client_removed"
+
+	// 版本与自更新（M9）
+	KeyVerCheckFailed   = "version.check_failed"
+	KeyVerNoCompare     = "version.no_compare"
+	KeyVerNewer         = "version.newer"
+	KeyVerUpdateHint    = "version.update_hint"
+	KeyVerUpToDate      = "version.up_to_date"
+	KeyVerReleasePage   = "version.release_page"
+	KeyVerNoSelfPath    = "version.no_self_path"
+	KeyVerUpdateStart   = "version.update_start"
+	KeyVerUpdateFailed  = "version.update_failed"
+	KeyVerNoChange      = "version.no_change"
+	KeyVerForceHint     = "version.force_hint"
+	KeyVerUpdateDone    = "version.update_done"
+	KeyVerNoRestart     = "version.no_restart"
+	KeyVerRestartFailed = "version.restart_failed"
+	KeyVerRestarted     = "version.restarted"
 )
 
 // AllKeys 列出本文件声明的全部 key。
@@ -624,5 +641,20 @@ func AllKeys() []string {
 		KeyMenuInstallWatch,
 		KeyMenuUninstall,
 		KeyUninstallClient,
+		KeyVerCheckFailed,
+		KeyVerNoCompare,
+		KeyVerNewer,
+		KeyVerUpdateHint,
+		KeyVerUpToDate,
+		KeyVerReleasePage,
+		KeyVerNoSelfPath,
+		KeyVerUpdateStart,
+		KeyVerUpdateFailed,
+		KeyVerNoChange,
+		KeyVerForceHint,
+		KeyVerUpdateDone,
+		KeyVerNoRestart,
+		KeyVerRestartFailed,
+		KeyVerRestarted,
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/misakacoo/warpgo/internal/fetch"
 	"github.com/misakacoo/warpgo/internal/systemd"
 )
 
@@ -167,25 +168,25 @@ func TestAssetName(t *testing.T) {
 func TestLookupSumAndNormalize(t *testing.T) {
 	sum := strings.Repeat("ab", 32)
 	content := fmt.Sprintf("%s  wireproxy_linux_386.tar.gz\n%s *wireproxy_linux_amd64.tar.gz\n", sum, sum)
-	if got := lookupSum(content, "wireproxy_linux_amd64.tar.gz"); got != sum {
+	if got := fetch.LookupSum(content, "wireproxy_linux_amd64.tar.gz"); got != sum {
 		t.Errorf("实得 %q，期望 %q（含 * 前缀的写法要认）", got, sum)
 	}
-	if got := lookupSum(content, "wireproxy_linux_arm64.tar.gz"); got != "" {
+	if got := fetch.LookupSum(content, "wireproxy_linux_arm64.tar.gz"); got != "" {
 		t.Errorf("清单里没有的资产应返回空串，实得 %q", got)
 	}
 	// 带目录前缀的名字也要能对上。
-	if got := lookupSum(sum+"  releases/wireproxy_linux_amd64.tar.gz", "wireproxy_linux_amd64.tar.gz"); got != sum {
+	if got := fetch.LookupSum(sum+"  releases/wireproxy_linux_amd64.tar.gz", "wireproxy_linux_amd64.tar.gz"); got != sum {
 		t.Errorf("带目录的名字应能对上，实得 %q", got)
 	}
 
-	if normalizeSHA(strings.ToUpper(sum)) != sum {
+	if fetch.NormalizeSHA(strings.ToUpper(sum)) != sum {
 		t.Error("大写应被收敛成小写")
 	}
-	if normalizeSHA("sha256:"+sum) != sum {
+	if fetch.NormalizeSHA("sha256:"+sum) != sum {
 		t.Error("sha256: 前缀应被剥掉")
 	}
 	for _, bad := range []string{"", "abc", strings.Repeat("z", 64), strings.Repeat("a", 63)} {
-		if normalizeSHA(bad) != "" {
+		if fetch.NormalizeSHA(bad) != "" {
 			t.Errorf("%q 不该被当成合法校验和", bad)
 		}
 	}
@@ -233,7 +234,7 @@ func TestInstallFromTarGz(t *testing.T) {
 	if err := os.WriteFile(src, tarGz(t, map[string]string{"wireproxy": "#!/bin/sh\necho hi\n"}, nil), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := installFrom(src, dst); err != nil {
+	if err := fetch.Install(src, dst, "wireproxy"); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(dst)
@@ -260,7 +261,7 @@ func TestInstallFromTarGzSingleOtherFile(t *testing.T) {
 	if err := os.WriteFile(src, tarGz(t, map[string]string{"wireproxy_linux_amd64": "X"}, nil), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := installFrom(src, dst); err != nil {
+	if err := fetch.Install(src, dst, "wireproxy"); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(dst); string(b) != "X" {
@@ -279,7 +280,7 @@ func TestInstallFromTarGzRejectsAmbiguous(t *testing.T) {
 	if err := os.WriteFile(src, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := installFrom(src, dst); err == nil {
+	if err := fetch.Install(src, dst, "wireproxy"); err == nil {
 		t.Fatal("应当拒绝：归档里没有 wireproxy")
 	}
 	if _, err := os.Stat(dst); err == nil {
@@ -295,7 +296,7 @@ func TestInstallFromTarGzIgnoresEntryPath(t *testing.T) {
 	if err := os.WriteFile(src, tarGz(t, map[string]string{"../../evil": "payload"}, nil), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := installFrom(src, dst); err != nil {
+	if err := fetch.Install(src, dst, "wireproxy"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "..", "..", "evil")); err == nil {
@@ -313,7 +314,7 @@ func TestInstallFromRawBinary(t *testing.T) {
 	if err := os.WriteFile(src, []byte("ELF-not-really"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := installFrom(src, dst); err != nil {
+	if err := fetch.Install(src, dst, "wireproxy"); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(dst); string(b) != "ELF-not-really" {

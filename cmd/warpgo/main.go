@@ -15,7 +15,6 @@ import (
 	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/system"
-	"github.com/misakacoo/warpgo/internal/version"
 )
 
 // 退出码，与设计文档 §9 一致。
@@ -139,36 +138,8 @@ func (a *app) printUsage() {
 	fmt.Fprintln(a.stdout, msg.T(msg.KeyUsage))
 }
 
-// cmdVersion 打印版本信息。
-//
-// 注意：`version` 在非 Debian 系统上也返回 0 —— 它是只读的查看命令，
-// 在开发机/CI 上应该能用；真正会改系统的命令才做 Debian 强校验。
-func (a *app) cmdVersion(args []string) int {
-	check := false
-	for _, arg := range args {
-		switch arg {
-		case "--check":
-			check = true
-		default:
-			fmt.Fprintf(a.stderr, "%s\n", msg.Tf(msg.KeyBadOpt, arg))
-			return exitError
-		}
-	}
-
-	fmt.Fprintf(a.stdout, "%s %s\n", msg.T(msg.KeyVersion), version.Info())
-
-	if v, ok := system.DebianVersion(); ok {
-		a.log.Infof("%s", msg.Tf(msg.KeyPlatformDebian, v))
-	} else {
-		a.log.Warnf("%s", msg.Tf(msg.KeyPlatformNotDebia, runtime.GOOS))
-	}
-
-	if check {
-		a.log.Warnf("%s", msg.Tf(msg.KeyNotImplemented, "M9"))
-		return exitOK
-	}
-	return exitOK
-}
+// cmdVersion 已移到 version.go —— 它现在不只是一行信息，还要能查新版本
+// （`--check`）与自我更新（`--self-update`），单独一个文件更好读。
 
 func (a *app) cmdDev(args []string) int {
 	if len(args) == 0 {
