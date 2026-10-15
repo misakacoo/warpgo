@@ -45,7 +45,7 @@
 | ----------------------- | ---------------------------------------- | ------------------------------- | ------------------- | --------------------------------------------------------------- |
 | `4` `6` `d` 装接口/切栈      | `install()` + `stack_switch()`           | `netcfg` + `tunnel`             | ✅ **M2**            | 已装则变为"切栈"（改 AllowedIPs 注释）                                      |
 | `o` 临时开关                | `onoff()`                                | 并入 `up` / `down`                | ✅ **M2**            | **不单设子命令**：关 = `down`（要留住保活用 `--keep-watch`），开 = `up`；账户与配置始终保留 |
-| `n` 获取 IP / 重连          | `net()`（199 行）                           | `health` + `keepalive`          | ✅ **M2/M4**         | **新语义**：默认先体检，健康不动；`--force` 才重建。保活即 `watch`（M4）                |
+| `n` 获取 IP / 重连          | `net()`（199 行）                           | `health` + `keepalive`          | ✅ **M2/M4**         | **新语义**：默认先体检，健康不动；`--force` 才重建。保活即 `watch`（M4）；建隧道时顺手把保活装上（菜单默认带 `--keepalive`，§8.19） |
 | `i` 换 IP（Netflix）       | `change_ip()`（214 行）                     | `cloudflare` + `netcfg`         | ✅ **M5**            | 重新注册换出口；**不做**流媒体解锁探测（见 §8.16）                                  |
 | `g` 全局/非全局切换            | `working_mode_switch()`                  | `netcfg.route` + `switch`       | ✅ **M3/M5**         | 要连路由一起换，不是只改注释                                                  |
 | `k` 内核↔用户态              | `kernel_reserved_switch()`               | `tunnel` + `userspace`          | ✅ **M5**            | 同一套实现对两种后端；见 §8.2                                               |
@@ -58,7 +58,7 @@
 | `l` 官方 Client → WARP 模式 | `client_install()`                       | `cfclient`                      | ✅ **M8**            | 会接管默认路由、可能切断 SSH，动手前明确警告（§8.10）                                 |
 | `r` Client 开关           | `client_onoff()`                         | `cfclient`                      | ✅ **M8**            |                                                                 |
 | `z` / `x` 隐藏命令          | `rule_add` / `rule_del`                  | `cfclient.HookAdd/HookDel`      | ✅ **M8**            | 供 `warp-svc` 的 ExecStartPost/ExecStop 调用；用 drop-in 挂载           |
-| 交互菜单（裸 `warp`）          | `menu()`                                 | `cmd/warpgo/menu.go`            | ✅ **M8**            | 薄封装：每个选项就是一条子命令；**裸敲 `warpgo` 也进这里**（原先只印用法，见 §8.17） |
+| 交互菜单（裸 `warp`）          | `menu()`                                 | `cmd/warpgo/menu.go`            | ✅ **M8**            | 薄封装：每个选项就是一条子命令；**裸敲 `warpgo` 也进这里**（原先只印用法，见 §8.17）。两项「建立隧道」默认带 `--keepalive`（§8.19） |
 | `h` 帮助                  | `help()` + E[6]/C[6]                     | `cli.help`                      | ✅ **M2**（随功能补全）     | `warpgo help` 覆盖全部子命令                                           |
 | 账户（只读）                  | `api.sh` 的 account 子命令                   | `cloudflare` + `cmd/account.go` | ✅ **M1**            | **只留纯本地只读视图**；WARP+ 绑定 / 设备列表 / 改名 / 注销已砍掉（§8.7）                |
 | 菜单内状态显示                 | `check_system_info()` + `menu()`         | `cmd/warpgo/menu.go`            | ✅ **M8**            | 菜单顶部：① 隧道 / 接管范围 / 隧道方式 / 账户 / 优先哪一族；② **每个地址族一行**公网出口 IP（含"多久前实测"）。**纯本地读取**（运行态 + 账户文件 + `/etc/gai.conf`），不联网、不探测 —— 出口 IP 是 `up` / 保活体检写进运行态的缓存（§8.18） |
@@ -154,13 +154,13 @@ warpgo/
 │   ├── account.go      ✅ 账户查看（纯本地只读）
 │   ├── profile.go      ✅ wg-quick 配置输出
 │   ├── ensure.go       ✅ 建隧道的共用流程（up / watch / rotate / switch 走同一份）
-│   ├── up.go           ✅ 建立隧道
+│   ├── up.go           ✅ 建立隧道（`--keepalive` 顺带装好保活，§8.19）
 │   ├── down.go         ✅ 先停保活，再拆隧道（含用户态守护进程），最后还原 DNS
 │   ├── status.go       ✅ 状态
 │   ├── rotate.go       ✅ 换 IP（换账户 + 回退保护 + 旧设备收尾）
 │   ├── switch.go       ✅ 在线互换后端 / 模式（并同步改写保活单元）
 │   ├── watch.go        ✅ 巡检命令
-│   ├── install.go      ✅ 装成 systemd 服务（含单元渲染的共用函数）
+│   ├── install.go      ✅ 装成 systemd 服务（单元渲染 + 从运行态推导安装参数，`up --keepalive` 也用它）
 │   ├── uninstall.go    ✅ 撤干净（含 DNS 还原）
 │   ├── guard.go        ✅ confirm / rollback-guard
 │   ├── userspace.go    ✅ userspace-daemon（内部命令）
@@ -1127,6 +1127,57 @@ M8 的菜单功能上是齐的，但**用起来不像上游那个菜单**。用�
 
 ---
 
+### 8.19 建隧道默认把保活装上（`up --keepalive`，2026-10-15 追加）
+
+用户的原话：「安装隧道后应该默认开启保活的」。
+
+在这之前，"建隧道"与"装保活"是两条完全独立的路（§8.13 特意这么设计过：
+装错了不影响正在跑的隧道，卸载也一样）。但它们合起来才是用户要的那件事 ——
+**隧道起来之后没有任何东西看着它**：断了没人知道，机器重启也不会自己回来。
+菜单是绝大多数人的入口（§8.17：裸敲就是菜单），所以默认值必须落在那里。
+
+做法是给 `up` 加一个显式的 `--keepalive`，菜单里两项「建立隧道」带上它：
+
+```
+warpgo up --keepalive                 # 建好之后：装二进制 → 写单元 → enable → restart
+```
+
+**为什么是 flag 而不是无条件行为**：`up` 是脚本接口，`off` / `on` / `rotate` /
+`switch` 内部也都调它。一个不带参数的 `up` 顺手写 systemd 单元、往 `/usr/bin`
+拷二进制，是最不该有的意外；e2e 里反复 `up` / `down` 的用例也会被搅乱。
+所以默认关、菜单默认开 —— "默认"落在**给人用的那一层**，而不是命令本身。
+
+**参数从运行态推**（`installArgsFromRuntime`），不从这次 `up` 的命令行推：
+运行态记的是**实际生效**的那套（默认值补过、auto 后端也定下来了），
+而命令行里很可能什么都没给。单元里钉的参数必须与现场一致，否则保活下一轮
+就会按另一套配置把隧道重建出来 —— 用户看到的是"装了个保活，隧道反倒变了样"。
+后端取 `BackendRequested`（与 `watch` / `switch` / `on` 同源），
+拿实际值会把一次 auto 回落永久钉死成 userspace。
+
+**装之前先把单实例锁交出去**：`install` 会 `restart` 保活服务，而服务起来的
+第一个动作就是抢同一把锁。握着锁去装它，等于让它开头那几轮必然空转，
+journal 里还会凭空多出一行"锁被占"（那时我们其实只是在装它）。
+实现上不能在 `defer a.releaseLock(lock)` 之后把 `lock` 置空 —— **defer 的实参
+在注册那一刻就求值了**，置空改的是局部变量，延迟调用拿到的还是那个指针，结果是释放两次。
+用一个 `released` 标志显式表达"已经交出去了"。
+
+**它不影响 `up` 的成败**：保活没装上只给一条指路的提示（隧道确实建好了，
+而且随时可以 `warpgo install` 重跑），不把一次成功的 `up` 判成失败。
+这一条与 §8.18 里"出口 IP 探不到不算失败"是同一条原则 ——
+**附带动作不该劫持主结果**。
+
+同时它顺带成了"把保活对齐到现场"的手段：装过的话，这一步会按当前配置改写单元
+并重启（与 `switch` 的 `syncWatchUnit` 同一份 `renderWatchUnit`）。
+
+菜单文案因此变成「建立隧道并开启保活 —— …」：那一行同时是确认提问的题干
+（§8.18 的确认机制），用户按 `y` 之前得看得到自己要装的是什么 ——
+"替用户做了个没说的事"与"替用户做决定"一样坏。
+
+`install.sh --with-tunnel`（无人值守）也走这条：机器上没人看着的时候，
+恰恰最需要自愈。
+
+---
+
 ## 9. CLI 与菜单
 
 子命令（非交互优先，菜单只是它的薄封装）：
@@ -1138,7 +1189,8 @@ warpgo register [--force] [--locale zh_CN]
 warpgo account [--json]                       # 纯本地读取，不联网
 warpgo profile [--out FILE] [--family ...] [--table-off] [--no-dns]
 warpgo up [--mode non-global|global] [--backend auto|kernel|userspace]
-          [--ifname] [--mtu] [--endpoint] [--dns] [--force] [--no-confirm]
+          [--ifname] [--mtu] [--endpoint] [--dns] [--force] [--no-confirm] [--keepalive]
+                                       # --keepalive：建好之后把保活装上（§8.19）
 warpgo down [--ifname] [--keep-watch]
 warpgo status [--json]
 warpgo rotate [--attempts N] [--mode ...] [--backend ...]      # i 换 IP

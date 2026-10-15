@@ -407,6 +407,49 @@ func TestMenuEntriesWellFormed(t *testing.T) {
 	}
 }
 
+// TestMenuBuildTunnelEnablesKeepalive 钉住"建隧道 = 连保活一起装"这条约定。
+//
+// 理由（用户实测提的）：隧道起来之后没有任何东西看着它 —— 断了不会自愈，
+// 机器重启也不会自己回来。菜单是绝大多数人的入口，所以"默认开启保活"这件事
+// 必须落在这一张表上；哪天有人把它删了，这条测试会红，而不是等到线上隧道断了
+// 才发现没人管。
+//
+// 同时要求**选项文案里提到保活**：那一行就是确认提问的题干，
+// 用户按 y 之前得看得到自己要装的是什么（否则就是替人做了个没说的事）。
+func TestMenuBuildTunnelEnablesKeepalive(t *testing.T) {
+	for _, choice := range []string{"3", "4"} {
+		e, ok := findMenuEntry(choice)
+		if !ok {
+			t.Fatalf("菜单里找不到选项 %q", choice)
+		}
+		if !hasArg(e.argv, "--keepalive") {
+			t.Fatalf("选项 %q（%s）应带 --keepalive，实得 %q", choice, msg.T(e.label), e.argv)
+		}
+		if !strings.Contains(msg.T(e.label), "保活") {
+			t.Fatalf("选项 %q 的文案该说清会装保活，实得 %q", choice, msg.T(e.label))
+		}
+	}
+
+	// 反向：其余项不该偷偷带上它（"恢复了隧道顺手装个服务"是最不该有的意外）。
+	for _, e := range menuEntries() {
+		if e.choice == "3" || e.choice == "4" {
+			continue
+		}
+		if hasArg(e.argv, "--keepalive") {
+			t.Fatalf("选项 %q 不该带 --keepalive：%q", e.choice, e.argv)
+		}
+	}
+}
+
+func hasArg(argv []string, flag string) bool {
+	for _, a := range argv {
+		if a == flag {
+			return true
+		}
+	}
+	return false
+}
+
 // TestConfirmDefaultsToNo 是"按错保护"本身的性质：
 // 只有明确的 y / yes 才放行；回车、别的字母、读不到输入，一律当取消。
 func TestConfirmDefaultsToNo(t *testing.T) {

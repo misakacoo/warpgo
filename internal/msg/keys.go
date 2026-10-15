@@ -193,6 +193,14 @@ const (
 	// 换栈必须重建（上游菜单 4 / 6 / d）
 	KeyUpStackRebuild = "up.stack_rebuild"
 
+	// 建好之后顺手把保活装上（`up --keepalive`，菜单里的"建立隧道"默认带它）。
+	//
+	// 两条分开是因为它们的性质完全不同：一条是"正在做"，一条是"做失败了但
+	// 隧道本身是好的" —— 后者必须把话说明白，否则用户看到一句"失败"
+	// 会以为整个 up 都没成。
+	KeyUpKeepalive       = "up.keepalive"
+	KeyUpKeepaliveFailed = "up.keepalive_failed"
+
 	// 公网出口 IP（建成之后顺手探一次，记进运行态给菜单用）
 	KeyUpExitIP      = "up.exit_ip"
 	KeyUpExitUnknown = "up.exit_unknown"
@@ -576,6 +584,8 @@ func AllKeys() []string {
 		KeyUpReasonNotDebian,
 		KeyUpReasonError,
 		KeyUpStackRebuild,
+		KeyUpKeepalive,
+		KeyUpKeepaliveFailed,
 		KeyUpExitIP,
 		KeyUpExitUnknown,
 		KeyExitLine,

@@ -124,8 +124,12 @@ func menuEntries() []menuEntry {
 		{msg.KeyMenuSecAccount, "1", msg.KeyMenuRegister, true, []string{"register"}, nil},
 		{msg.KeyMenuSecAccount, "2", msg.KeyMenuAccount, false, []string{"account"}, nil},
 
-		{msg.KeyMenuSecTunnel, "3", msg.KeyMenuUpNonGlobal, true, []string{"up"}, nil},
-		{msg.KeyMenuSecTunnel, "4", msg.KeyMenuUpGlobal, true, []string{"up", "--mode", "global"}, nil},
+		// 两项"建立隧道"都带 --keepalive：隧道起来之后没有任何东西看着它，
+		// 断了不会自愈、重启也不会回来。用户实测的原话是"安装隧道后应该默认
+		// 开启保活"，所以这里默认装，并且把这件事写进选项文案 ——
+		// 那一行同时是确认提问里的题干，用户按 y 之前看得到自己要装的是什么。
+		{msg.KeyMenuSecTunnel, "3", msg.KeyMenuUpNonGlobal, true, []string{"up", "--keepalive"}, nil},
+		{msg.KeyMenuSecTunnel, "4", msg.KeyMenuUpGlobal, true, []string{"up", "--mode", "global", "--keepalive"}, nil},
 		{msg.KeyMenuSecTunnel, "5", msg.KeyMenuOff, true, []string{"off"}, nil},
 		{msg.KeyMenuSecTunnel, "6", msg.KeyMenuOn, true, []string{"on"}, nil},
 		{msg.KeyMenuSecTunnel, "7", msg.KeyMenuStatus, false, []string{"status"}, nil},

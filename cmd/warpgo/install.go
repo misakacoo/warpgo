@@ -14,6 +14,7 @@ import (
 	"github.com/misakacoo/warpgo/internal/keepalive"
 	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
+	"github.com/misakacoo/warpgo/internal/state"
 	"github.com/misakacoo/warpgo/internal/system"
 	"github.com/misakacoo/warpgo/internal/systemd"
 	"github.com/misakacoo/warpgo/internal/tunnel"
@@ -180,6 +181,64 @@ func (a *app) cmdInstall(args []string) int {
 
 	a.log.Infof("%s", msg.Tf(msg.KeyInstallDone, systemd.UnitName, interval))
 	return exitOK
+}
+
+// installKeepalive 在隧道建好之后把保活装上（`up --keepalive`）。
+//
+// 为什么这件事值得默认做：隧道起来之后**没有任何东西看着它**。断了没人知道，
+// 机器重启了也不会自己回来 —— 用户实测的原话是"安装隧道后应该默认开启保活"。
+// 装上之后是开机自启 + 每 5 分钟体检一次，健康时一个字节都不改（幂等，见 cmdWatch）。
+//
+// 它同时是"把保活对齐到当前配置"的手段：已经装过的话，这里会按这次生效的参数
+// 改写单元并重启 —— 否则单元里钉着的还是上一次的 --backend / --mode，
+// 保活下一轮就会把隧道按旧配置重建回去（用户看到的是"装了保活，隧道反倒变样了"）。
+//
+// 失败**不算 up 失败**：隧道确实建好了，这一步是锦上添花，而且随时可以
+// `warpgo install` 重跑。只给一条指路的警告，不把已经成功的 up 判成失败。
+func (a *app) installKeepalive() {
+	rt, err := state.LoadRuntime(state.RuntimePath())
+	if err != nil || rt.IfName == "" {
+		// 读不到运行态 = 隧道其实没建成，调用方那边已经报过错了，这里不补刀。
+		return
+	}
+	a.log.Infof("%s", msg.T(msg.KeyUpKeepalive))
+	if code := a.cmdInstall(installArgsFromRuntime(rt)); code != exitOK {
+		a.log.Warnf("%s", msg.T(msg.KeyUpKeepaliveFailed))
+	}
+}
+
+// installArgsFromRuntime 把运行态翻译成一组 `install` 的参数。
+//
+// 读运行态而不是这次 `up` 的命令行：运行态记的是**实际生效**的那一套
+// （默认值已经补过、auto 后端也定下来了），而命令行里很可能什么都没给。
+// 单元里钉的参数必须与"这台机器现在这个样子"一致 —— 见 installKeepalive。
+//
+// 后端的取值用**用户要求的那个**（BackendRequested），与 `watch` / `switch` /
+// `on` 同源：拿实际值会把一次 auto 回落永久钉死成 userspace（见 state.Runtime）。
+func installArgsFromRuntime(rt *state.Runtime) []string {
+	if rt == nil || rt.IfName == "" {
+		return nil
+	}
+	args := []string{"--ifname", rt.IfName}
+	if rt.Mode != "" {
+		args = append(args, "--mode", rt.Mode)
+	}
+	switch {
+	case rt.BackendRequested != "":
+		args = append(args, "--backend", rt.BackendRequested)
+	case rt.Backend != "":
+		args = append(args, "--backend", rt.Backend)
+	}
+	if rt.MTU > 0 {
+		args = append(args, "--mtu", strconv.Itoa(rt.MTU))
+	}
+	if rt.Endpoint != "" {
+		args = append(args, "--endpoint", rt.Endpoint)
+	}
+	if len(rt.DNS) > 0 {
+		args = append(args, "--dns", strings.Join(rt.DNS, ","))
+	}
+	return args
 }
 
 // installBinary 把当前可执行文件复制到 dst。

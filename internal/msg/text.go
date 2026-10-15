@@ -56,6 +56,8 @@ var text = map[string]string{
   --stack 4|6|d        隧道携带哪几族地址（4 = 只 IPv4，6 = 只 IPv6，d = 双栈）
   --ifname / --mtu / --endpoint / --dns
                        接口名 / MTU / 对端端点 / 隧道内 DNS
+  --keepalive          建好之后把保活装成 systemd 服务（开机自启、断了自动重建）
+                       交互菜单里的"建立隧道"默认带它
 
 全局选项:
   -v, --verbose        调试日志
@@ -140,6 +142,13 @@ var text = map[string]string{
 	KeyUpReasonNotDebian:    "不是 Debian 系统",
 	KeyUpStackRebuild:       "栈从 %s 变成 %s —— 接口上原来那一族的地址不会自己消失，改为先拆后建",
 	KeyUpReasonError:        "执行出错",
+
+	// 建好之后顺手装保活（`up --keepalive`）。
+	//
+	// "失败"那条刻意不长篇大论：原因已经由 `install` 自己报了（那一步的报错比
+	// 这里准确），这里只需要把最要紧的两件事说清楚 —— 隧道是好的、怎么重试。
+	KeyUpKeepalive:       "顺带把保活装上（开机自启、断了自动重建）",
+	KeyUpKeepaliveFailed: "保活没装上（隧道本身是好的，可以先用）：可单独重跑 `warpgo install`",
 
 	// 公网出口 IP：建完顺手探一次，记进运行态（菜单要显示它）。
 	//
@@ -427,8 +436,8 @@ install 的选项:
 	KeyMenuSecMaint:      "保活与维护",
 	KeyMenuRegister:      "注册一个新的 WARP 设备（没有账户、或想换个身份）",
 	KeyMenuAccount:       "查看本机账户（只读，不联网）",
-	KeyMenuUpNonGlobal:   "建立隧道 —— 非全局（只让指定流量走 WARP，不会切断 SSH）",
-	KeyMenuUpGlobal:      "建立隧道 —— 全局接管（整机流量都走 WARP，可能切断 SSH）",
+	KeyMenuUpNonGlobal:   "建立隧道并开启保活 —— 非全局（只让指定流量走 WARP，不会切断 SSH）",
+	KeyMenuUpGlobal:      "建立隧道并开启保活 —— 全局接管（整机流量都走 WARP，可能切断 SSH）",
 	KeyMenuDown:          "拆除隧道（清空全部残留）",
 	KeyMenuOff:           "临时关闭（保留配置，可随时恢复）",
 	KeyMenuOn:            "恢复隧道（按上次的配置）",

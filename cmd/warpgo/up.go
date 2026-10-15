@@ -28,6 +28,7 @@ func (a *app) cmdUp(args []string) int {
 		dnsStr          string
 		force           bool
 		noConfirm       bool
+		withKeepalive   bool
 		guardTimeoutStr string
 	)
 	opts := newOptionSet().
@@ -40,6 +41,7 @@ func (a *app) cmdUp(args []string) int {
 		Str("--dns", &dnsStr).
 		Bool("--force", &force).
 		Bool("--no-confirm", &noConfirm).
+		Bool("--keepalive", &withKeepalive).
 		Str("--guard-timeout", &guardTimeoutStr)
 	if err := opts.parse(args); err != nil {
 		return a.fail(err)
@@ -120,7 +122,16 @@ func (a *app) cmdUp(args []string) int {
 	if code != exitOK {
 		return code
 	}
-	defer a.releaseLock(lock)
+	// released 让"提前交锁"成为可能（见下面 --keepalive 那段）。
+	// 不能靠 `defer a.releaseLock(lock)` + 之后把 lock 置空 —— defer 的实参
+	// 在**注册那一刻**就求值了，置空改的是局部变量，延迟调用拿到的还是那个指针，
+	// 结果是释放两次。
+	released := false
+	defer func() {
+		if !released {
+			a.releaseLock(lock)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), upTimeout)
 	defer cancel()
@@ -147,10 +158,23 @@ func (a *app) cmdUp(args []string) int {
 	if code != exitOK {
 		return code
 	}
-	if mode == netcfg.ModeGlobal {
-		// 全局模式的收尾文案由 finishGlobal 给出（它还要区分是否确认）。
-		return exitOK
+	// 全局模式的收尾文案由 finishGlobal 给出（它还要区分是否确认），这里不重复。
+	if mode != netcfg.ModeGlobal {
+		a.log.Infof("%s", res.Detail)
 	}
-	a.log.Infof("%s", res.Detail)
+
+	// 建好之后顺手把保活装上（`--keepalive`，菜单里的"建立隧道"默认带它）。
+	//
+	// 装之前**先把锁交出去**：`install` 会 restart 保活服务，而服务起来的第一个
+	// 动作就是抢同一把锁 —— 握着锁去装它，等于让它开头那几轮必然空转，
+	// journal 里还会凭空多出一行"锁被占"（那时我们其实只是在装它）。
+	//
+	// 注意这一步在**两种模式下都做**：全局模式尤其需要它 —— 它自带的保险丝只管
+	// 建起来那一次，管不了之后隧道断掉。
+	if withKeepalive {
+		released = true
+		a.releaseLock(lock)
+		a.installKeepalive()
+	}
 	return exitOK
 }

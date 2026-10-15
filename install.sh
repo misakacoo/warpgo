@@ -7,6 +7,7 @@
 #   ① 探架构 → ② 解析最新 tag → ③ 下载并校验 sha256 → ④ 装到 /usr/bin/warpgo
 #   ⑤ 补齐运行环境（内核模块可用性 + wireguard-tools）
 #   ⑥ 交给你：装完直接进交互菜单，**建不建隧道由你自己选**
+#      （菜单里的"建立隧道"会连保活一起装好：开机自启、断了自动重建）
 #
 # ⑤ 与 ⑥ 的分工是刻意的：安装脚本负责"把东西装好"，不负责"替你决定要什么"。
 # 建隧道会改路由，那是个该由人按下去的键 —— 脚本自己顺手建掉，等于把
@@ -21,7 +22,7 @@
 #   install.sh                       # 交互（推荐）：装完进菜单
 #   install.sh --version v0.1.1      # 装指定版本
 #   install.sh --yes                 # 非交互：只装二进制与依赖，不做后续
-#   install.sh --with-tunnel         # 非交互：再顺手注册 + 建非全局隧道（无人值守用）
+#   install.sh --with-tunnel         # 非交互：再顺手注册 + 建非全局隧道 + 装保活（无人值守用）
 #   install.sh --prefix /usr/local/bin
 #   install.sh --no-backup
 #
@@ -59,7 +60,7 @@ warpgo 一键安装脚本
   install.sh                       # 交互（推荐）：装完进菜单
   install.sh --version ${WANT_TAG:-v0.1.1}      # 装指定版本
   install.sh --yes                 # 非交互：只装二进制与依赖，不做后续
-  install.sh --with-tunnel         # 非交互：再顺手注册 + 建非全局隧道（无人值守用）
+  install.sh --with-tunnel         # 非交互：再顺手注册 + 建非全局隧道 + 装保活（无人值守用）
   install.sh --prefix /usr/local/bin
   install.sh --no-backup
 
@@ -304,8 +305,10 @@ do_register() {
 }
 
 do_up() {
-	info "建立隧道（非全局：只让指定源地址走 WARP，不动默认路由、不断 SSH）……"
-	"$BIN" up || die "建隧道失败。可用 warpgo status 看状态，或重跑 warpgo up"
+	info "建立隧道并装好保活（非全局：只让指定源地址走 WARP，不动默认路由、不断 SSH）……"
+	# --keepalive：把保活一并装上（开机自启、断了自动重建）。
+	# 无人值守的机器最需要它 —— 恰恰是没人看着的时候才需要自愈。
+	"$BIN" up --keepalive || die "建隧道失败。可用 warpgo status 看状态，或重跑 warpgo up"
 }
 
 finish() {
@@ -319,7 +322,7 @@ warpgo 已就绪（${BIN}）。
 
 常用命令：
   warpgo status                   看当前状态
-  warpgo up                       建立隧道（非全局：不动默认路由、不断 SSH）
+  warpgo up --keepalive           建立隧道（非全局：不动默认路由、不断 SSH）+ 装好保活
   warpgo version --self-update    升级到最新版本
   warpgo uninstall                撤干净（服务、隧道、二进制、DNS 改动）
 EOF

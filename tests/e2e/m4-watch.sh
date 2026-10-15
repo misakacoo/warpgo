@@ -234,6 +234,34 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
+section "8b. up --keepalive：没装过保活时，建隧道会顺手把它装上"
+# 先退成"只手工起过隧道、从没装过保活"的现场（这正是用户报的那个场景）。
+systemctl stop "$UNIT_NAME" >/dev/null 2>&1
+systemctl disable "$UNIT_NAME" >/dev/null 2>&1
+rm -f "$UNIT" "$SVC_BIN"
+systemctl daemon-reload >/dev/null 2>&1
+[ -f "$UNIT" ] && bad "现场准备失败：单元还在" || ok "现场准备：已退成「没装过保活」"
+
+out=$(timeout 180 "$BIN" up --keepalive 2>&1); rc=$?
+printf '%s\n' "$out" | sed 's/^/    /'
+[ "$rc" -eq 0 ] && ok "up --keepalive 退出码 0" || bad "up --keepalive 退出码 $rc"
+[ -f "$UNIT" ] && ok "保活单元被顺手装上了" || bad "保活没装上（--keepalive 没生效）"
+[ -x "$SVC_BIN" ] && ok "二进制也已放到 $SVC_BIN（单元要求绝对路径）" || bad "二进制未安装"
+systemctl is-enabled "$UNIT_NAME" >/dev/null 2>&1 && ok "已设为开机自启" || bad "未设为开机自启"
+systemctl is-active "$UNIT_NAME" >/dev/null 2>&1 && ok "服务已启动" || bad "服务未启动"
+
+# 单元里钉的参数必须与**这台机器现在**的样子一致 —— 否则保活下一轮就会按
+# 另一套配置把隧道重建出来（用户看到的是"装了个保活，隧道反倒变了样"）。
+RT_MODE=$(sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ETC/runtime.json" | head -1)
+if [ -n "$RT_MODE" ]; then
+  grep -q -- "--mode $RT_MODE" "$UNIT" && ok "单元里的 --mode 与运行态一致（$RT_MODE）" \
+                                        || bad "单元里的 --mode 与现场不一致（运行态是 $RT_MODE）"
+else
+  note "读不出运行态里的 mode（跳过一致性核对）"
+fi
+grep -q '^ExecStart=' "$UNIT" && ok "ExecStart: $(sed -n 's/^ExecStart=//p' "$UNIT")" || bad "没有 ExecStart"
+
+# ─────────────────────────────────────────────────────────────
 section "9. down 必须先停保活，否则隧道会「拆了又自己回来」"
 systemctl start "$UNIT_NAME" >/dev/null 2>&1
 systemctl is-active "$UNIT_NAME" >/dev/null 2>&1 && ok "服务已处于运行态" || note "服务未能启动（继续）"
