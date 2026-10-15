@@ -383,8 +383,23 @@ func ensureRunDir() error {
 	return nil
 }
 
+// ensureDirOf 确保 path **自己所在的那个目录**存在。
+//
+// 这里必须按 path 取目录，而不是用上面的 ensureRunDir()：writeFileAtomic 的调用方
+// 可以显式传一个别处的路径（单测传的就是 t.TempDir()），那时它既不该、也不需要
+// 去碰 /run/warpgo。曾经写死成 ensureRunDir()，于是"传了临时路径"的调用
+// 仍然要求 /run 的写权限 —— 非 root 环境下必然失败（首次跑 CI 时就是这么暴露的）；
+// 而生产路径恰好全在 RunDir() 下，所以以 root 跑的真机上一直没看出来。
+func ensureDirOf(path string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("创建 %s: %w", dir, err)
+	}
+	return nil
+}
+
 func writeFileAtomic(path string, data []byte) error {
-	if err := ensureRunDir(); err != nil {
+	if err := ensureDirOf(path); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp*")
