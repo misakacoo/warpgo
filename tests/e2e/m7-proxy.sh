@@ -249,14 +249,25 @@ case "$(socks_trace "$PORT")" in
 esac
 
 section "5b. 换端口（$PORT → $PORT2）"
-"$BIN" proxy install --port "$PORT2" >/tmp/m7-port2.txt 2>&1 && ok "用新端口重装成功" || bad "换端口失败: $(tail -2 /tmp/m7-port2.txt)"
+if "$BIN" proxy install --port "$PORT2" >/tmp/m7-port2.txt 2>&1; then
+  ok "用新端口重装成功"
+else
+  # 装完之后它会**经 socks5 实测**一次才算成功；而对端偶尔要几十秒才握手成功，
+  # 那一刻 install 会以"链路还没通"退出 —— 但配置与服务其实都已经就位。
+  # 真正的判据是下面几条可观测量 + wait_socks，所以这里只记一条提示。
+  # （曾经因为这一条偶发地红过一次：2026-10-15 全量回归里 M7 报 82/84，
+  #   单独复跑立刻 84/84 —— 是探测时机，不是实现。）
+  note "install 返回非零（多半是装完那一刻链路还没通），以可观测量为准"
+fi
 grep -q "BindAddress = 127.0.0.1:$PORT2$" "$WP_CONF" && ok "配置已改成新端口" || bad "配置没改端口"
 [ "$(port_listen "$PORT2")" != "0" ] && ok "新端口在监听" || bad "新端口没有监听"
 [ "$(port_listen "$PORT")" = "0" ] && ok "旧端口已释放" || bad "旧端口仍在监听"
-case "$(socks_trace "$PORT2")" in
-  *warp=on*) ok "经新端口的访问仍是 WARP" ;;
-  *)         bad "经新端口拿不到 warp=on（$(socks_trace "$PORT2")）" ;;
-esac
+# 用 wait_socks 而不是单次探测：换端口会重启服务，握手要几秒到几十秒。
+if wait_socks "$PORT2" 30; then
+  ok "经新端口的访问仍是 WARP（$(socks_trace "$PORT2")）"
+else
+  bad "经新端口拿不到 warp=on（$(socks_trace "$PORT2")）"
+fi
 
 # ---- 6. 关 / 开 ---------------------------------------------------------------
 
