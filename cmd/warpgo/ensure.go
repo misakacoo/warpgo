@@ -55,12 +55,21 @@ const (
 	// verifyBudget 是验证**一个候选后端**的总预算（含重试与间隔）。
 	verifyBudget = 40 * time.Second
 
-	// exitProbeBudget 是"探一次公网出口 IP"的预算。
+	// exitProbeTimeout 是探**单一地址族**出口的单次超时。
+	//
+	// 比 verifyTimeout 略短：出口 IP 只是个展示字段，为它多等一秒都不值。
+	exitProbeTimeout = 5 * time.Second
+
+	// exitProbeBudget 是"探一轮公网出口 IP"的总预算。
+	//
+	// 它是**两族共用**的一份预算（不是各给一份），而且两族是**并行**探的：
+	// 串行时"v6 不通"这一常见情况会让每次 up 都白等一个完整超时。
+	// 上限比原值（8s）略放宽，因为现在要覆盖两族；正常情况两族都在 1 秒内回来。
 	//
 	// 它比 verifyBudget 小得多：这只是一次 trace 请求，且**失败无害**
 	// （留空即可，菜单会显示"出口 IP 未知"）—— 不该为了一个装饰性字段
 	// 把 `up` 拖慢，更不该让它成为 `up` 失败的第二个原因。
-	exitProbeBudget = 8 * time.Second
+	exitProbeBudget = 10 * time.Second
 )
 
 // anyPrefix4 / anyPrefix6 是两族的全量 AllowedIPs。
@@ -424,11 +433,15 @@ func (a *app) ensureTunnelOnce(ctx context.Context, acct *cloudflare.Account, op
 	return res, exitOK
 }
 
-// probeExit 探一次"经隧道出去时公网看到的出口"。
+// probeExit 探一次"经隧道出去时公网看到的出口"，返回**第一个通的族**。
 //
 // 只读。**必须确认 warp=on 才采信**：否则拿到的可能是宿主自己的出口地址，
 // 把它当成"WARP 出口"汇报会得出完全错误的结论（rotate 那边就是靠这条
 // 才敢说"IP 一点没变"）。
+//
+// 只要一个值（"出口 IP 是多少、变了没有"）时用它，比如 `rotate`；
+// 要把两族**各记一份**时用 probeExitFamily —— `ProbeAny` 遇到第一个通的族
+// 就返回，双栈机器上永远只拿得到 v4 那条，菜单里正是因此只显示了 IPv4。
 func (a *app) probeExit(ctx context.Context, ifName string, families []int) (health.Result, bool) {
 	if !netcfg.LinkExists(ifName) {
 		return health.Result{}, false
@@ -443,37 +456,88 @@ func (a *app) probeExit(ctx context.Context, ifName string, families []int) (hea
 	return res, true
 }
 
-// recordExitIP 把这次体检看到的出口 IP / 地区记进运行态。
+// probeExitFamily 探**单一地址族**的出口。
+func (a *app) probeExitFamily(ctx context.Context, ifName string, family int) (health.Result, bool) {
+	if !netcfg.LinkExists(ifName) {
+		return health.Result{}, false
+	}
+	res, err := health.Probe(ctx, family, health.Options{
+		Interface: ifName,
+		Timeout:   exitProbeTimeout,
+	})
+	if err != nil || !res.WarpOn() {
+		return health.Result{}, false
+	}
+	return res, true
+}
+
+// recordExitIP 把这次体检看到的出口记进运行态，**每一族各一条**。
 //
-// 为什么值得多花一次探测：菜单顶部要显示"你的出口 IP"，而菜单本身不许联网
-// （见 state.Runtime 的 ExitIP 注释），所以真实值必须由会联网的那一方写下来。
+// 为什么值得花两次探测：菜单顶部要显示"你的出口 IP"，而菜单本身不许联网
+// （见 state.Runtime 的 ExitV4 注释），所以真实值必须由会联网的那一方写下来。
+// 双栈机器上 v4 与 v6 是两个不同的答案（实测可以落在两个不同的 PoP），
+// 只记一个等于答了一半 —— 用户看到的就是"IPv6 那一行是空的"。
 func (a *app) recordExitIP(ctx context.Context, rt *state.Runtime, quiet bool) {
 	if rt == nil {
 		return
 	}
 	families := rt.Families
 	if len(families) == 0 {
-		families = []int{health.FamilyV4, health.FamilyV6}
+		families = []int{state.FamilyV4, state.FamilyV6}
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, exitProbeBudget)
 	defer cancel()
 
-	res, ok := a.probeExit(probeCtx, rt.IfName, families)
-	if !ok {
+	// 两族并行：它们互不依赖，而串行时"v6 不通"（常见）会让每次 up 都白等
+	// 一个完整超时。用 buffer = len(families) 的 channel，即便某个 goroutine
+	// 超时后仍在跑，也不会漏掉接收、更不会因无人接收而永久阻塞。
+	type outcome struct {
+		res health.Result
+		ok  bool
+	}
+	ch := make(chan outcome, len(families))
+	for _, fam := range families {
+		go func(fam int) {
+			res, ok := a.probeExitFamily(probeCtx, rt.IfName, fam)
+			ch <- outcome{res: res, ok: ok}
+		}(fam)
+	}
+	got := map[int]health.Result{}
+	for range families {
+		o := <-ch
+		if o.ok {
+			got[o.res.Family] = o.res
+		}
+	}
+
+	// 落盘顺序按 families 来，不按 goroutine 的完成顺序 —— 否则日志里
+	// "先 IPv6 后 IPv4"会随调度漂移，看着像出了岔子。
+	now := time.Now().UTC()
+	var parts []string
+	for _, fam := range families {
+		res, ok := got[fam]
+		if !ok {
+			continue
+		}
+		rt.SetExit(fam, res.IP, res.Location, now)
+		parts = append(parts, fmt.Sprintf("%s %s", health.FamilyName(fam), exitDetail(res.IP, res.Location)))
+	}
+	if len(parts) == 0 {
 		a.log.Debugf("%s", msg.T(msg.KeyUpExitUnknown))
 		return
 	}
-	if !a.saveExit(rt, res) {
+	if err := rt.Save(state.RuntimePath()); err != nil {
+		a.log.Debugf("记录出口 IP 失败: %v", err)
 		return
 	}
-	a.say(quiet, msg.KeyUpExitIP, res.IP, joinOrDash(res.Location))
+	a.say(quiet, msg.KeyUpExitIP, strings.Join(parts, " · "))
 }
 
-// saveExit 把探测结果写进运行态文件；写失败只警告（它只是个展示字段）。
-func (a *app) saveExit(rt *state.Runtime, res health.Result) bool {
-	rt.ExitIP = res.IP
-	rt.ExitLoc = res.Location
-	rt.ExitAt = time.Now().UTC()
+// saveExit 把**一族**的探测结果写进运行态文件（保活巡检用）。
+//
+// 写失败只记 debug：它只是个展示字段，不该影响调用方的主流程。
+func (a *app) saveExit(rt *state.Runtime, family int, res health.Result) bool {
+	rt.SetExit(family, res.IP, res.Location, time.Now().UTC())
 	if err := rt.Save(state.RuntimePath()); err != nil {
 		a.log.Debugf("记录出口 IP 失败: %v", err)
 		return false
@@ -486,15 +550,22 @@ func (a *app) saveExit(rt *state.Runtime, res health.Result) bool {
 // 保活每轮本来就要探一次连通性，顺手更新这一项 —— 否则菜单里的"出口 IP"
 // 会一直停在最后一次 up 的时刻，看久了就像个错的值。每轮多一次几百字节的
 // 原子写，换来的是这一行始终与最近一次体检一致，值这个价。
+//
+// 只更新**探到的那一族**：保活一轮只探一族（`ProbeAny`），把另一族一起清掉
+// 会让菜单里的 IPv6 那一行随机消失 —— 而保活的本意是"巡检连通性"，
+// 不是"顺手把别人记的数据抹了"。
 func (a *app) recordExitFrom(res health.Result) {
 	if res.IP == "" {
+		return
+	}
+	if res.Family != state.FamilyV4 && res.Family != state.FamilyV6 {
 		return
 	}
 	rt, err := state.LoadRuntime(state.RuntimePath())
 	if err != nil {
 		return
 	}
-	_ = a.saveExit(rt, res)
+	_ = a.saveExit(rt, res.Family, res)
 }
 
 // verifyViaTunnel 在隧道刚建好之后做一次只读体检：至少一族能经接口拿到 warp=on。

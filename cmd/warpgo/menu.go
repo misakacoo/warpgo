@@ -12,6 +12,8 @@ import (
 
 	"github.com/misakacoo/warpgo/internal/cfclient"
 	"github.com/misakacoo/warpgo/internal/cloudflare"
+	"github.com/misakacoo/warpgo/internal/gai"
+	"github.com/misakacoo/warpgo/internal/health"
 	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
 	"github.com/misakacoo/warpgo/internal/proxy"
@@ -175,21 +177,22 @@ func (a *app) printMenu() {
 	fmt.Fprintln(a.stdout)
 }
 
-// menuStatusLines 拼出菜单顶部的状态，**两行**：
+// menuStatusLines 拼出菜单顶部的状态区，第一行是概况、后面每族出口一行：
 //
-//	第一行 = 隧道在不在 / 怎么接管 / 用什么方式 / 账户类型
-//	第二行 = 公网出口 IP（读运行态里记下的那次体检结果）
+//	隧道 warp · 模式 非全局 · 后端 用户态兼容 · 账户 free · 优先走 IPv4
+//	出口 IPv4 104.28.211.105（JP）· 3 分钟前实测
+//	出口 IPv6 2606:4700:110:834c:…:70e4（JP）· 3 分钟前实测
 //
-// 为什么必须分两行（用户实测反馈"信息都放一行会很长"）：出口 IP 是 IPv6 时
-// 单这一个字段就有 40 个字符，再加上地区与"多久前实测"，整行能到 70+ 字符 ——
-// 在一行 80 列的终端里刚好顶到边上，窄一点就直接折行折得不成样子。
+// 为什么必须分这么多行（用户实测反馈"信息都放一行会很长"，随后又指出
+// "只显示 IPv4 没显示 IPv6"、"也没显示优先哪一族"）：光一个 IPv6 地址就是
+// 39 个字符，三项挤进一行能到 120+ 字符 —— 在 80 列的终端上折得不成样子。
 //
 // 每一项都独立容错：没有运行态就是"隧道没起来"（菜单最常见的起点，不是错误），
 // 没有账户就是"未注册"。两者都不该让菜单打不开 —— 恰恰相反，
-// 这两种情况正是用户最需要看到菜单的时候。
+// 这两种情况正是用户最需要看到菜单的时候。优先级那一项与运行态无关，永远显示。
 func (a *app) menuStatusLines() []string {
 	var head []string
-	exit := ""
+	var exit []string
 
 	rt, err := state.LoadRuntime(state.RuntimePath())
 	if err != nil || rt.IfName == "" {
@@ -202,7 +205,7 @@ func (a *app) menuStatusLines() []string {
 		if rt.Backend != "" {
 			head = append(head, msg.Tf(msg.KeyMenuStatusBackend, backendName(rt.Backend)))
 		}
-		exit = menuExitText(rt)
+		exit = menuExitLines(rt)
 	}
 
 	acct, err := cloudflare.LoadAccount(state.AccountPath())
@@ -212,51 +215,96 @@ func (a *app) menuStatusLines() []string {
 		head = append(head, msg.Tf(msg.KeyMenuStatusAccount, joinOrDash(acct.AccountType)))
 	}
 
+	// 优先级排在概况行最后：它描述的是系统怎么选地址族，与隧道在不在无关，
+	// 所以隧道没起来时它照样在（"我该怎么建"本来就该参考它）。
+	head = append(head, preferText())
+
 	lines := []string{strings.Join(head, " · ")}
-	if exit != "" {
-		lines = append(lines, exit)
+	return append(lines, exit...)
+}
+
+// menuExitLines 组织"公网出口 IP"那几行 —— **每个地址族一行**。
+//
+// 为什么必须分行：IPv6 地址本身就有 39 个字符，把两族挤进一行是 80+ 字符，
+// 在 80 列的终端上必折行（用户先前反馈"信息都放一行会很长"）。
+// 而"只显示 IPv4"则来自另一处：探测用的 `ProbeAny` 遇到第一个通的族就返回，
+// 于是双栈机器上 v6 那条从来没有被记下来过（用户的第二条反馈）。
+//
+// 打印的是**记下来的值**，不是现探的：菜单是纯观察动作，不许联网
+// （断网、隧道刚断的时候它照样要能打开）。代价是这个值可能已经过时，
+// 所以每行都带上"多久之前实测" —— 一个不带时间的 IP 会被当成此刻的事实。
+// 时间跟着族走：两族的探测各自独立，v6 完全可能是上一轮保活测的。
+//
+// 只列**隧道实际携带的族**（`rt.Families`）：单栈隧道下再列一个永远为空的
+// "出口 IPv6"，等于凭空制造一个假问题。
+//
+// 显示的是**公网出口**（访问网站时对方看到的地址），不是隧道接口地址
+// （172.16.0.2 那种）。用户实测反馈过这一点：后者看着像个 IP，
+// 但拿它去对"我的 IP 变了吗"只会得出错误结论。
+func menuExitLines(rt *state.Runtime) []string {
+	families := rt.Families
+	if len(families) == 0 {
+		// 老版本写的运行态文件里没有 families；按双栈显示，
+		// 认不出的一族自然会落在"未知"上，而不是凭空少一行。
+		families = []int{state.FamilyV4, state.FamilyV6}
+	}
+	lines := make([]string, 0, len(families))
+	for _, fam := range families {
+		detail := msg.T(msg.KeyExitUnknown)
+		if e := rt.ExitFor(fam); e != nil && e.IP != "" {
+			detail = exitAgo(e)
+		}
+		lines = append(lines, msg.Tf(msg.KeyMenuStatusExitIP, health.FamilyName(fam), detail))
 	}
 	return lines
 }
 
-// menuExitText 组织"公网出口 IP"那一行。
-//
-// 打印的是**记下来的值**，不是现探的：菜单是纯观察动作，不许联网
-// （断网、隧道刚断的时候它照样要能打开）。代价是这个值可能已经过时，
-// 所以后面必须带上"多久之前实测" —— 一个不带时间的 IP 会被当成此刻的事实。
-//
-// 显示的是**公网出口**（访问网站时对方看到的地址），不是隧道接口地址
-// （172.16.0.2 那种内部私有地址）。用户实测反馈过这一点：后者看着像个 IP，
-// 但拿它去对"我的 IP 变了吗"只会得出错误结论。
-func menuExitText(rt *state.Runtime) string {
-	if summary := exitSummary(rt); summary != "" {
-		return msg.Tf(msg.KeyMenuStatusExitIP, summary)
-	}
-	return msg.Tf(msg.KeyMenuStatusExitIP, msg.T(msg.KeyExitUnknown))
-}
-
-// exitSummary 把"出口 IP（地区）+ 多久前实测"拼成一句话。
+// exitAgo 把一条出口记录拼成"IP（地区）+ 多久前实测"。
 //
 // **菜单与 `status` 共用**它，而不是各拼一遍：这是同一个值的两种呈现，
 // 分开写必然漂移（第一版就漂了 —— 一边写"出口 IP 未知"，一边写"还没体检过"）。
-// 空串表示"还没有值"，由调用方决定怎么表达"没有"。
-func exitSummary(rt *state.Runtime) string {
-	if rt.ExitIP == "" {
-		return ""
-	}
-	detail := rt.ExitIP
-	if rt.ExitLoc != "" {
-		detail = fmt.Sprintf("%s（%s）", detail, rt.ExitLoc)
-	}
-	if rt.ExitAt.IsZero() {
+func exitAgo(e *state.Exit) string {
+	detail := exitDetail(e.IP, e.Location)
+	if e.At.IsZero() {
 		return detail
 	}
-	age := time.Since(rt.ExitAt)
+	age := time.Since(e.At)
 	if age < time.Minute {
 		// "0 秒前实测"读着别扭，而 `up` 一结束就打开菜单恰恰是最常见的现场。
 		return msg.Tf(msg.KeyExitJustNow, detail)
 	}
 	return msg.Tf(msg.KeyExitLine, detail, humanAge(age))
+}
+
+// exitDetail 拼出"IP（地区）"；没有地区时只给 IP，不留一个空括号。
+func exitDetail(ip, loc string) string {
+	if loc == "" {
+		return ip
+	}
+	return fmt.Sprintf("%s（%s）", ip, loc)
+}
+
+// preferText 报告本机当前**优先用哪一族地址**（读 /etc/gai.conf，纯本地文件）。
+//
+// 这是状态区里唯一一项与运行态无关的信息 —— 它描述的是系统的解析偏好，
+// 隧道建没建、账户有没有都不影响它，所以**永远都显示**：
+// 菜单上少一行，用户会以为这项不存在，而它恰恰是"我该建哪种隧道"的输入之一。
+//
+// 读不出文件内容时（权限、怪格式）直说读不到，不留空 —— 与文案表"查不到 key
+// 就返回 key 本身"是同一条原则：宁可显示一个明确的"不知道"，也不要显示空白。
+func preferText() string {
+	mode, _, err := gai.New(gai.DefaultPath).Detect()
+	if err != nil {
+		return msg.T(msg.KeyMenuPreferUnknown)
+	}
+	switch mode {
+	case gai.ModeV4:
+		return msg.T(msg.KeyMenuPreferV4)
+	case gai.ModeV6:
+		return msg.T(msg.KeyMenuPreferV6)
+	default:
+		return msg.T(msg.KeyMenuPreferDefault)
+	}
 }
 
 // backendName / modeName 把运行态里的原始值翻成人话。

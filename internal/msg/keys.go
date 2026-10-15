@@ -208,6 +208,15 @@ const (
 	KeyExitJustNow = "exit.just_now"
 	KeyExitUnknown = "exit.unknown"
 
+	// 菜单状态区的"优先哪一族"。
+	//
+	// 它读的是 /etc/gai.conf（`internal/gai`），与运行态无关 —— 隧道没起来时
+	// 这一项照样要显示，所以它不属于 `menu.status_*` 那一组"隧道状态"。
+	KeyMenuPreferV4      = "menu.prefer_v4"
+	KeyMenuPreferV6      = "menu.prefer_v6"
+	KeyMenuPreferDefault = "menu.prefer_default"
+	KeyMenuPreferUnknown = "menu.prefer_unknown"
+
 	// 换 IP（M5）
 	KeyRotateStart       = "rotate.start"
 	KeyRotateAttempt     = "rotate.attempt"
@@ -572,6 +581,10 @@ func AllKeys() []string {
 		KeyExitLine,
 		KeyExitJustNow,
 		KeyExitUnknown,
+		KeyMenuPreferV4,
+		KeyMenuPreferV6,
+		KeyMenuPreferDefault,
+		KeyMenuPreferUnknown,
 		KeyRotateStart,
 		KeyRotateAttempt,
 		KeyRotateSameAddr,

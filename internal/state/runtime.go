@@ -52,21 +52,70 @@ type Runtime struct {
 	// 而 `on` 要靠这个字段知道当初改成了什么。
 	DNS []string `json:"dns,omitempty"`
 
-	// ExitIP / ExitLoc / ExitAt 是**上一次体检看到的公网出口**（空 = 还没体检过）。
+	// ExitV4 / ExitV6 是**上一次体检看到的公网出口**，按地址族各记一份。
 	//
-	// 为什么要把它持久化，而不是用时现探：菜单顶部那行状态要回答
-	// "我现在从哪个 IP 出去"，而那正是打开菜单的人最想知道的一件事；
-	// 但菜单是**纯观察**动作（不联网、不做探测、断网时也得能打开），
-	// 所以它只能读一个**已经记下来**的值。真实值由落盘的那一方负责写：
-	// `up` / `switch` / `on` 重建成功后探一次，保活每轮体检也顺手更新。
+	// 为什么要把它持久化，而不是用时现探：菜单顶部要回答"我现在从哪个 IP 出去"，
+	// 而那正是打开菜单的人最想知道的一件事；但菜单是**纯观察**动作
+	// （不联网、不做探测、断网时也得能打开），所以它只能读一个**已经记下来**的值。
+	// 真实值由落盘的那一方负责写：`up` / `switch` / `on` 重建成功后探一次，
+	// 保活每轮体检也顺手更新。
+	//
+	// 按族分开记、而不是只留"最近一次成功的那个"，是两个原因叠加的结果：
+	//   - 双栈机器上 v4 出口与 v6 出口**本来就是两个不同的答案**
+	//     （实测同一时刻可能是两个不同的 PoP），只留一个等于答了一半；
+	//   - 保活每轮只探一族（`health.ProbeAny` 遇到第一个通的就返回），
+	//     只留一个值会让另一族在下一轮被覆盖成空。
 	//
 	// 注意它**不是**隧道接口地址（172.16.0.2 那种）：那个是隧道内部的私有地址，
 	// 与"访问网站时对方看到的 IP"是两件事，混在一起会让人误判自己没走 WARP。
-	ExitIP  string    `json:"exit_ip,omitempty"`
-	ExitLoc string    `json:"exit_loc,omitempty"`
-	ExitAt  time.Time `json:"exit_checked_at,omitempty"`
+	ExitV4 *Exit `json:"exit_v4,omitempty"`
+	ExitV6 *Exit `json:"exit_v6,omitempty"`
 
 	UpSince time.Time `json:"up_since"`
+}
+
+// Exit 是某一族观测到的公网出口。
+//
+// 时间戳跟着值走、而不是两族共用一个"最近体检时刻"：两族的探测各自独立，
+// 共用一个时间戳会出现"v6 其实是三天前测的，而这一行说你刚刚测过"。
+type Exit struct {
+	IP       string    `json:"ip,omitempty"`
+	Location string    `json:"location,omitempty"`
+	At       time.Time `json:"at,omitempty"`
+}
+
+// 地址族。
+//
+// 与 netcfg / health 的同名常量取值一致（4 / 6），因为这是内核 AF_INET /
+// AF_INET6 的惯例，也是上游菜单 `4` / `6` / `d` 的取值 —— 三处对齐比
+// 让 state 反向依赖 netcfg（那会把它拖进 netlink）更划算。
+const (
+	FamilyV4 = 4
+	FamilyV6 = 6
+)
+
+// ExitFor 返回某一族的出口记录；没有记录时返回 nil。
+func (r *Runtime) ExitFor(family int) *Exit {
+	switch family {
+	case FamilyV6:
+		return r.ExitV6
+	default:
+		return r.ExitV4
+	}
+}
+
+// SetExit 记下某一族的出口观测值。
+//
+// 认不出的族号**什么都不做**，而不是默默写成 v4：那会让一个上游传来的
+// 意外取值把 IPv4 那条记录覆盖成错误的值，而错误的值比没有值更难发现。
+func (r *Runtime) SetExit(family int, ip, location string, at time.Time) {
+	e := &Exit{IP: ip, Location: location, At: at}
+	switch family {
+	case FamilyV4:
+		r.ExitV4 = e
+	case FamilyV6:
+		r.ExitV6 = e
+	}
 }
 
 // Save 写入运行态（0600、原子写）。

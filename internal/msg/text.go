@@ -145,7 +145,7 @@ var text = map[string]string{
 	//
 	// 说明里那句"地区"用的是 trace 报的 loc 字段（JP / HKG 这种），
 	// 它跟"出口 IP"是同一份探测结果，分开报会让两行信息对不上。
-	KeyUpExitIP:      "公网出口 IP: %s（%s）",
+	KeyUpExitIP:      "公网出口 IP: %s",
 	KeyUpExitUnknown: "这次没能探到公网出口 IP（不影响隧道可用，也不影响任何功能）",
 
 	// status / 菜单里那句"公网出口 IP"（共用同一套措辞，见 keys.go 的注释）。
@@ -154,7 +154,16 @@ var text = map[string]string{
 	// （`up` 一结束就打开菜单看）。
 	KeyExitLine:    "%s，%s前实测",
 	KeyExitJustNow: "%s，刚刚实测",
-	KeyExitUnknown: "还没体检过（重建隧道或等保活巡检一次就有了）",
+	KeyExitUnknown: "还没体检过",
+
+	// 菜单状态区的"优先哪一族"。
+	//
+	// 三个取值对仗（优先走 X / 由系统决定），因为它们在菜单里占的是**同一个位置**，
+	// 说法不一致会让人以为是三个不相干的东西。
+	KeyMenuPreferV4:      "优先走 IPv4",
+	KeyMenuPreferV6:      "优先走 IPv6",
+	KeyMenuPreferDefault: "由系统决定",
+	KeyMenuPreferUnknown: "优先级未知",
 
 	KeyDownStart:   "正在拆除 WARP 隧道",
 	KeyDownNothing: "没有需要拆除的东西（接口、残留规则与路由都不存在）",
@@ -472,7 +481,7 @@ install 的选项:
 	KeyMenuStatusDown:      "隧道未建立",
 	KeyMenuStatusMode:      "模式 %s",
 	KeyMenuStatusBackend:   "后端 %s",
-	KeyMenuStatusExitIP:    "出口 IP %s",
+	KeyMenuStatusExitIP:    "出口 %s %s",
 	KeyMenuStatusAccount:   "账户 %s",
 	KeyMenuStatusNoAccount: "未注册",
 

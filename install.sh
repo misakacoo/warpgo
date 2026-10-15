@@ -5,7 +5,12 @@
 #
 # 它做的事**只有**这些，别的都不碰：
 #   ① 探架构 → ② 解析最新 tag → ③ 下载并校验 sha256 → ④ 装到 /usr/bin/warpgo
-#   ⑤ 之后由你选要不要继续（注册账户 / 建隧道 / 装保活服务）
+#   ⑤ 补齐运行环境（内核模块可用性 + wireguard-tools）
+#   ⑥ 交给你：装完直接进交互菜单，**建不建隧道由你自己选**
+#
+# ⑤ 与 ⑥ 的分工是刻意的：安装脚本负责"把东西装好"，不负责"替你决定要什么"。
+# 建隧道会改路由，那是个该由人按下去的键 —— 脚本自己顺手建掉，等于把
+# "我只是想装个工具"变成了"我的出网被改了"。
 #
 # 关于信任：这个脚本本身走 HTTPS 从 GitHub 取，但**没有独立的校验和** ——
 # 想先读一遍再跑，把上面的 `| sudo bash` 换成 `| less`。
@@ -13,16 +18,17 @@
 # 而且在校验通过之前不会动系统里的任何东西。
 #
 # 用法:
-#   install.sh                       # 交互（推荐）
+#   install.sh                       # 交互（推荐）：装完进菜单
 #   install.sh --version v0.1.1      # 装指定版本
-#   install.sh --yes                 # 非交互：只装二进制，不做后续
-#   install.sh --with-tunnel         # 非交互：装完接着注册 + 建非全局隧道
+#   install.sh --yes                 # 非交互：只装二进制与依赖，不做后续
+#   install.sh --with-tunnel         # 非交互：再顺手注册 + 建非全局隧道（无人值守用）
 #   install.sh --prefix /usr/local/bin
 #   install.sh --no-backup
 #
 # 一个必须知道的细节：`curl | bash` 时 **stdin 是脚本本身**，所以任何提问都不能
-# 直接 `read`（那会把脚本文本当输入吃掉）。下面统一从 /dev/tty 读。
-# 没有可用的 tty 时，自动退化成 `--yes` 的行为（只装二进制）。
+# 直接 `read`（那会把脚本文本当输入吃掉）。下面统一从 /dev/tty 读，
+# 进菜单时也要显式把 stdin 接到 /dev/tty（见文件末尾）。
+# 没有可用的 tty 时，自动退化成 `--yes` 的行为（只装二进制与依赖）。
 
 set -euo pipefail
 
@@ -50,10 +56,10 @@ usage() {
 warpgo 一键安装脚本
 
 用法:
-  install.sh                       # 交互（推荐）
+  install.sh                       # 交互（推荐）：装完进菜单
   install.sh --version ${WANT_TAG:-v0.1.1}      # 装指定版本
-  install.sh --yes                 # 非交互：只装二进制，不做后续
-  install.sh --with-tunnel         # 非交互：装完接着注册 + 建非全局隧道
+  install.sh --yes                 # 非交互：只装二进制与依赖，不做后续
+  install.sh --with-tunnel         # 非交互：再顺手注册 + 建非全局隧道（无人值守用）
   install.sh --prefix /usr/local/bin
   install.sh --no-backup
 
@@ -64,7 +70,8 @@ warpgo 一键安装脚本
   curl -fsSL ${SELF_URL} | less
 
 它只做这些: 探架构 → 解析最新 tag → 下载并校验 sha256 → 装到 ${PREFIX}/warpgo
-→ 之后由你选要不要继续（注册账户 / 建隧道 / 装保活服务）。
+→ 补齐运行环境（wireguard 内核模块 + wireguard-tools）
+→ 进交互菜单，要不要建隧道由你自己选。
 只支持 Debian，需要 root。
 EOF
 }
@@ -199,6 +206,11 @@ tar -xzf "${WORK}/${NAME}" -C "$STAGE" || die "归档解不开（文件可能损
 
 BIN="${PREFIX}/warpgo"
 
+# 目录不存在时得自己建：默认的 /usr/bin 一直都在，所以这个缺口只在自定义
+# 前缀时才暴露 —— 而它恰恰是 `--prefix /opt/warpgo/bin` 这种"干净目录"
+# 用法的第一颗钉子（真机实测踩到：install 直接报 No such file or directory）。
+mkdir -p "$PREFIX" || die "建不出目录 ${PREFIX}"
+
 if [ -e "$BIN" ]; then
 	OLD=$("$BIN" version 2>/dev/null | head -1 || true)
 	if [ "$DO_BACKUP" = yes ]; then
@@ -233,7 +245,45 @@ fi
 printf '\n'
 "$BIN" version || true
 
+# ---------------------------------------------------------------- 运行环境
+
+# warpgo 本身是**零运行时依赖**的静态二进制：不用 wg / wg-quick / jq / python
+# （见 README「为什么不用 shell」）。所以这里只补两样**可选**的东西，
+# 而且两样都不是"安装成功"的前提 —— 拿不到只提示，不失败。
+#
+# 把它们列进来是有实际理由的：少了第一样，默认的内核后端起不来，
+# 而那个报错发生在后面某一步、看起来像 warpgo 的 bug；少了第二样，
+# `warpgo profile` 输出的那份配置就没有 wg-quick 可以交给它。
+prepare_env() {
+	# `modprobe -n` 是 dry-run：只问"能不能加载"，不改系统状态。
+	if modprobe -n wireguard >/dev/null 2>&1; then
+		info "内核自带 wireguard 模块"
+	else
+		warn "内核里没有 wireguard 模块：「内核直通」那种后端用不了，请在菜单里选「用户态兼容」—— 它不依赖内核模块。"
+	fi
+
+	if command -v wg >/dev/null 2>&1; then
+		info "wireguard-tools 已在（wg / wg-quick 可用）"
+		return 0
+	fi
+	command -v apt-get >/dev/null 2>&1 || return 0
+
+	info "安装 wireguard-tools（提供 wg / wg-quick；warpgo 自己不依赖它）……"
+	# 先直接装（多数机器上包索引是热的），失败了再 update 重试一次：
+	# 无条件 update 会让每次安装都多等十几秒，而那只在冷机器上才有意义。
+	if ! apt-get install -y -qq wireguard-tools >/dev/null 2>&1; then
+		apt-get update -qq >/dev/null 2>&1 || true
+		if ! apt-get install -y -qq wireguard-tools >/dev/null 2>&1; then
+			warn "wireguard-tools 没装上 —— 不影响 warpgo 运行，只是少了 wg / wg-quick 这个逃生口。"
+			return 0
+		fi
+	fi
+	info "wireguard-tools 装好了"
+}
+
 # ---------------------------------------------------------------- 后续步骤
+
+prepare_env
 
 # 拿二进制自己当探针，而不是去拼 /etc/warpgo/account.json 的路径 ——
 # 它自己认 WARPGO_ETC 覆盖，路径知识只该有一处（internal/state）。
@@ -242,6 +292,8 @@ have_account() { "$BIN" account >/dev/null 2>&1; }
 
 # 注册是**幂等但不重复**的：已有账户时 register 会拒绝（换注册等于换出口 IP，
 # 必须是显式决定）。所以这里先探测，别让用户在菜单里撞一个注定失败的选项。
+#
+# 只有 `--with-tunnel`（无人值守）会走到这里 —— 交互路径下这些决定全在菜单里。
 do_register() {
 	if have_account; then
 		info "已有 WARP 账户，跳过注册（要换出口 IP 用 warpgo rotate）"
@@ -256,19 +308,20 @@ do_up() {
 	"$BIN" up || die "建隧道失败。可用 warpgo status 看状态，或重跑 warpgo up"
 }
 
-do_keepalive() {
-	info "把保活装成 systemd 服务……"
-	"$BIN" install || die "装保活失败。可单独重跑：warpgo install"
-}
-
 finish() {
 	cat <<EOF
 
-完成。常用命令：
-  warpgo                          交互菜单（直接敲它，不用记子命令）
+warpgo 已就绪（${BIN}）。
+
+接下来做什么**由你决定** —— 安装脚本不替你建隧道（除非显式给了 --with-tunnel）。
+
+  敲 sudo warpgo 进交互菜单（22 个选项，每个都是一条子命令）
+
+常用命令：
   warpgo status                   看当前状态
+  warpgo up                       建立隧道（非全局：不动默认路由、不断 SSH）
   warpgo version --self-update    升级到最新版本
-  warpgo uninstall                撤干净（单元、隧道、二进制、DNS 改动）
+  warpgo uninstall                撤干净（服务、隧道、二进制、DNS 改动）
 EOF
 
 	# 备份是我们自己留下的东西，得告诉用户它在哪、什么时候能删 ——
@@ -293,88 +346,21 @@ fi
 # 实测确认过（ssh 不带 -t 时 `[ -rw /dev/tty ]` 真、`(exec </dev/tty)` 假）。
 has_tty() { (exec </dev/tty) 2>/dev/null; }
 
-# 没有可用的终端（无人值守）→ 退化成"只装二进制"，不猜你的意图。
+# 没有可用的终端（无人值守）→ 退化成"只装二进制与依赖"，不猜你的意图。
 if ! has_tty; then
 	warn "没有可用的终端，跳过后续步骤（等同于 --yes）。"
 	finish
 	exit 0
 fi
 
-# 提问必须走 /dev/tty：`curl | bash` 时 stdin 是脚本本身。
-ask() {
-	local ans=
-	printf '%s' "$1" >/dev/tty
-	IFS= read -r ans </dev/tty || ans=
-	printf '%s' "$ans"
-}
-
-cat <<'EOF'
-
-接下来做什么？（下面这些只动 warpgo 自己的配置；非全局模式不动默认路由、也不会断 SSH）
-
-EOF
-
-# 按现场状态给菜单：已有账户就不摆"注册"这项，否则那一步注定失败。
-HAS_ACCOUNT=no
-if have_account; then
-	HAS_ACCOUNT=yes
-	cat <<'EOF'
-检测到本机已有 WARP 账户，跳过注册相关选项
-（要换出口 IP：warpgo rotate；想重新注册：warpgo register --force）。
-
-  1) 就到这里 —— 什么都不做
-  2) 建立隧道（非全局）
-  3) 2 + 把保活装成 systemd 服务（开机自启，断线自动重建）
-
-EOF
-else
-	cat <<'EOF'
-  1) 就到这里 —— 什么都不做
-  2) 注册一个免费的 WARP 账户
-  3) 2 + 建立隧道（非全局）
-  4) 3 + 把保活装成 systemd 服务（开机自启，断线自动重建）
-
-EOF
-fi
-
-while :; do
-	choice=$(ask '选择（回车 = 1）: ')
-	case "$choice" in
-	'' | 1)
-		break
-		;;
-	2)
-		if [ "$HAS_ACCOUNT" = yes ]; then do_up; else do_register; fi
-		break
-		;;
-	3)
-		if [ "$HAS_ACCOUNT" = yes ]; then
-			do_up
-			do_keepalive
-		else
-			do_register
-			do_up
-		fi
-		break
-		;;
-	4)
-		if [ "$HAS_ACCOUNT" = yes ]; then
-			printf '请输入 1 到 3。\n' >/dev/tty
-			continue
-		fi
-		do_register
-		do_up
-		do_keepalive
-		break
-		;;
-	*)
-		if [ "$HAS_ACCOUNT" = yes ]; then
-			printf '请输入 1 到 3。\n' >/dev/tty
-		else
-			printf '请输入 1 到 4。\n' >/dev/tty
-		fi
-		;;
-	esac
-done
-
-finish
+# 装完直接进**完整的交互菜单**，而不是在这里再摆一套简化菜单。
+#
+# 两套菜单（脚本的 1/2/3 与 `warpgo menu` 的 22 项）早晚会对不上，而且脚本
+# 那套还在替用户做决定（"2 = 注册 + 建隧道"）—— 用户的反馈正是这一条：
+# 安装脚本该做的只是"把东西装好"，建不建隧道要在菜单里由他自己选。
+#
+# stdin 必须**显式接到 /dev/tty**：`curl | bash` 时 stdin 是脚本本身，
+# 而菜单是从 stdin 读选择的 —— 不重定向的话它一开始就读到 EOF，然后立刻退出。
+# （脚本自己的提问也一直从 /dev/tty 读，为的是同一个原因。）
+printf '\n进入交互菜单 —— 建立隧道 / 注册账户 / 装保活都在里面，退出选 0。\n\n'
+exec "$BIN" menu </dev/tty

@@ -42,14 +42,15 @@ func writeStateFile(t *testing.T, name, body string) {
 
 // TestMenuStatusLinesOnCleanMachine 覆盖菜单最常见的起点：什么都没建。
 //
-// 这两行必须都能打出来 —— 恰恰是"隧道没起来、账户也没注册"的时候，
-// 用户最需要看到菜单（而不是被一个报错挡住）。
+// 概况行必须能打出来 —— 恰恰是"隧道没起来、账户也没注册"的时候，
+// 用户最需要看到菜单（而不是被一个报错挡住）。而且这一行里**必须有
+// "优先哪一族"**：它与运行态无关，是独立的系统设置。
 func TestMenuStatusLinesOnCleanMachine(t *testing.T) {
 	t.Setenv(state.EnvDir, t.TempDir())
 
 	lines := newTestApp(t).menuStatusLines()
 	if len(lines) != 1 {
-		t.Fatalf("隧道没起来时不该有第二行（出口 IP 无从谈起），实得 %d 行: %q", len(lines), lines)
+		t.Fatalf("隧道没起来时不该有出口行（无从谈起），实得 %d 行: %q", len(lines), lines)
 	}
 	if !strings.Contains(lines[0], "隧道未建立") {
 		t.Fatalf("没有运行态时应显示「隧道未建立」，实得 %q", lines[0])
@@ -57,14 +58,23 @@ func TestMenuStatusLinesOnCleanMachine(t *testing.T) {
 	if !strings.Contains(lines[0], "未注册") {
 		t.Fatalf("没有账户时应显示「未注册」，实得 %q", lines[0])
 	}
+	// 优先族与隧道在不在无关：它读的是 /etc/gai.conf。
+	if got := preferText(); got == "" || !strings.Contains(lines[0], got) {
+		t.Fatalf("概况行里应有「优先哪一族」，实得 %q", lines[0])
+	}
 }
 
 // TestMenuStatusLinesWithRuntimeAndAccount 是本条最要紧的正面用例：
-// 状态行必须**分两行**，且第二行是**公网出口 IP**，不是隧道接口地址。
+// 状态区必须**概况一行 + 每个地址族各一行**，而且出口那几行显示的是
+// **公网出口 IP**，不是隧道接口地址。
+//
+// 用户连着提了两条："IP 放第二行，信息都放一行会很长"、"只显示了 IPv4
+// 没显示 IPv6"。这条测试把两件事都钉住。
 func TestMenuStatusLinesWithRuntimeAndAccount(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(state.EnvDir, dir)
 
+	checkedAt := time.Now().Add(-3 * time.Minute).UTC().Format(time.RFC3339)
 	writeStateFile(t, state.RuntimeFile, `{
 		"if_name": "warp",
 		"mode": "non-global",
@@ -74,9 +84,8 @@ func TestMenuStatusLinesWithRuntimeAndAccount(t *testing.T) {
 		"families": [4, 6],
 		"addrs": ["172.16.0.2/32", "2606:4700:110::1/128"],
 		"endpoint": "engage.cloudflareclient.com:2408",
-		"exit_ip": "104.28.211.105",
-		"exit_loc": "JP",
-		"exit_checked_at": "`+time.Now().Add(-3*time.Minute).UTC().Format(time.RFC3339)+`",
+		"exit_v4": {"ip": "104.28.211.105", "location": "JP", "at": "`+checkedAt+`"},
+		"exit_v6": {"ip": "2606:4700:110:834c:eb9e:c595:a449:70e4", "location": "JP", "at": "`+checkedAt+`"},
 		"up_since": "2026-10-15T00:00:00Z"
 	}`)
 	writeStateFile(t, state.AccountFile, `{
@@ -86,21 +95,25 @@ func TestMenuStatusLinesWithRuntimeAndAccount(t *testing.T) {
 	}`)
 
 	lines := newTestApp(t).menuStatusLines()
-	if len(lines) != 2 {
-		t.Fatalf("隧道在线时应有 2 行（第二行是出口 IP），实得 %d 行: %q", len(lines), lines)
+	if len(lines) != 3 {
+		t.Fatalf("双栈应有三行（概况 + 每族一行），实得 %d 行: %q", len(lines), lines)
 	}
 	for _, want := range []string{"隧道 warp", "模式 非全局", "后端 内核直通", "账户 free"} {
 		if !strings.Contains(lines[0], want) {
-			t.Fatalf("第一行里应包含 %q，实得 %q", want, lines[0])
+			t.Fatalf("概况行里应包含 %q，实得 %q", want, lines[0])
 		}
 	}
-	// 第二行：公网出口 IP + 地区 + "多久前实测"。
-	for _, want := range []string{"出口 IP 104.28.211.105", "JP", "3 分钟前实测"} {
+	for _, want := range []string{"出口 IPv4 104.28.211.105", "JP", "3 分钟前实测"} {
 		if !strings.Contains(lines[1], want) {
-			t.Fatalf("第二行里应包含 %q，实得 %q", want, lines[1])
+			t.Fatalf("IPv4 那一行里应包含 %q，实得 %q", want, lines[1])
 		}
 	}
-	// 隧道内部地址（172.16.0.2 / 2606:4700:110::）**不该**出现在菜单里：
+	for _, want := range []string{"出口 IPv6", "2606:4700:110:834c:eb9e:c595:a449:70e4"} {
+		if !strings.Contains(lines[2], want) {
+			t.Fatalf("IPv6 那一行里应包含 %q，实得 %q", want, lines[2])
+		}
+	}
+	// 隧道内部地址（172.16.0.2 / 2606:4700:110::1）**不该**出现在菜单里：
 	// 它不是"我的 IP"，拿它去判断"IP 变没变"只会得出错误结论。
 	for _, line := range lines {
 		if strings.Contains(line, "172.16.0.2") || strings.Contains(line, "2606:4700:110::1") {
@@ -109,11 +122,11 @@ func TestMenuStatusLinesWithRuntimeAndAccount(t *testing.T) {
 	}
 	// 运行态里的原始值不该原样露出来（用户看不懂 kernel / non-global）。
 	if strings.Contains(lines[0], "kernel") || strings.Contains(lines[0], "non-global") {
-		t.Fatalf("第一行应显示人话而不是运行态原值: %q", lines[0])
+		t.Fatalf("概况行应显示人话而不是运行态原值: %q", lines[0])
 	}
 }
 
-// TestMenuStatusLinesExitUnknown：隧道在线但从没体检过 —— 第二行要说清
+// TestMenuStatusLinesExitUnknown：隧道在线但从没体检过 —— 出口行要说清
 // "还不知道"，而不是留空（留空看着像这一行坏了，也像"没有出口 IP"）。
 func TestMenuStatusLinesExitUnknown(t *testing.T) {
 	dir := t.TempDir()
@@ -121,14 +134,62 @@ func TestMenuStatusLinesExitUnknown(t *testing.T) {
 	writeStateFile(t, state.RuntimeFile, `{"if_name": "warp", "mode": "non-global", "backend": "userspace"}`)
 
 	lines := newTestApp(t).menuStatusLines()
-	if len(lines) != 2 {
-		t.Fatalf("实得 %d 行: %q", len(lines), lines)
+	if len(lines) != 3 {
+		t.Fatalf("运行态里没有 families 时按双栈显示，实得 %d 行: %q", len(lines), lines)
 	}
-	if !strings.Contains(lines[1], "还没体检过") {
-		t.Fatalf("第二行应说明出口 IP 还不知道，实得 %q", lines[1])
+	for _, i := range []int{1, 2} {
+		if !strings.Contains(lines[i], "还没体检过") {
+			t.Fatalf("第 %d 行应说明出口 IP 还不知道，实得 %q", i+1, lines[i])
+		}
 	}
 	if !strings.Contains(lines[0], "后端 用户态兼容") {
 		t.Fatalf("后端应翻成人话，实得 %q", lines[0])
+	}
+}
+
+// TestMenuExitLinesPerFamily 钉住"每族一行、时间跟着族走"。
+//
+// 两族的探测是各自独立的（`up` 并行探、保活一轮只探一族），所以
+// "IPv4 刚刚测过、IPv6 是一小时前测的"是**正常现场**，
+// 而共用一个时间戳恰好会把这件事说反 —— 那正是这条测试要挡的。
+func TestMenuExitLinesPerFamily(t *testing.T) {
+	now := time.Now()
+	rt := &state.Runtime{
+		Families: []int{state.FamilyV4, state.FamilyV6},
+		ExitV4:   &state.Exit{IP: "104.28.211.105", Location: "JP", At: now},
+		ExitV6:   &state.Exit{IP: "2606:4700:110:834c:eb9e:c595:a449:70e4", Location: "HK", At: now.Add(-time.Hour)},
+	}
+	lines := menuExitLines(rt)
+	if len(lines) != 2 {
+		t.Fatalf("两族都该各占一行，实得 %d 行: %q", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "IPv4") || !strings.Contains(lines[0], "104.28.211.105") {
+		t.Fatalf("第一行应是 IPv4 出口: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "IPv6") || !strings.Contains(lines[1], "2606:4700:110:834c") {
+		t.Fatalf("第二行应是 IPv6 出口: %q", lines[1])
+	}
+	if strings.Contains(lines[1], "刚刚实测") {
+		t.Fatalf("IPv6 那条是一小时前测的，不该跟着 IPv4 说「刚刚」: %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "HK") {
+		t.Fatalf("两族的地区可能不同，各自都要显示: %q", lines[1])
+	}
+}
+
+// TestMenuExitLinesSingleStack 覆盖单栈隧道：不带的那一族**不该出现**。
+//
+// 凭空列一个永远为空的"出口 IPv6"等于制造一个假问题 ——
+// 真相是这条隧道本来就不带 v6。
+func TestMenuExitLinesSingleStack(t *testing.T) {
+	rt := &state.Runtime{Families: []int{state.FamilyV4}}
+
+	lines := menuExitLines(rt)
+	if len(lines) != 1 || !strings.Contains(lines[0], "IPv4") {
+		t.Fatalf("单栈 v4 只该列一行 IPv4，实得 %q", lines)
+	}
+	if !strings.Contains(lines[0], "还没体检过") {
+		t.Fatalf("没有值时该明说，实得 %q", lines[0])
 	}
 }
 
@@ -181,22 +242,22 @@ func TestMenuNamesAreHuman(t *testing.T) {
 	}
 }
 
-// TestExitSummaryJustNow：刚体检完不该显示"0 秒前实测"。
+// TestExitAgoJustNow：刚体检完不该显示"0 秒前实测"。
 //
 // 这不是吹毛求疵：`up` 一结束就打开菜单看状态是最常见的用法，
 // 而那条路径恰恰总会命中"几秒钟前"。
-func TestExitSummaryJustNow(t *testing.T) {
-	rt := &state.Runtime{ExitIP: "104.28.211.105", ExitLoc: "JP", ExitAt: time.Now()}
-	if got := exitSummary(rt); !strings.Contains(got, "刚刚实测") {
+func TestExitAgoJustNow(t *testing.T) {
+	rt := &state.Runtime{ExitV4: &state.Exit{IP: "104.28.211.105", Location: "JP", At: time.Now()}}
+	if got := exitAgo(rt.ExitV4); !strings.Contains(got, "刚刚实测") {
 		t.Fatalf("刚体检完应显示「刚刚实测」，实得 %q", got)
 	}
-	if got := exitSummary(&state.Runtime{}); got != "" {
-		t.Fatalf("没有值时应返回空串（由调用方表达「没有」），实得 %q", got)
-	}
-	// 没有时间戳（老运行态文件）时也要能显示 IP，不能整句消失。
-	rt2 := &state.Runtime{ExitIP: "1.2.3.4"}
-	if got := exitSummary(rt2); got != "1.2.3.4" {
+	// 没有时间戳（老运行态文件里没有 at）时也要能显示 IP，不能整句消失。
+	if got := exitAgo(&state.Exit{IP: "1.2.3.4"}); got != "1.2.3.4" {
 		t.Fatalf("没有时间戳时应只给 IP，实得 %q", got)
+	}
+	// 没有地区时不该留一个空括号（"1.2.3.4（）"看着像坏了）。
+	if got := exitAgo(&state.Exit{IP: "1.2.3.4", At: time.Now()}); got != "1.2.3.4，刚刚实测" {
+		t.Fatalf("没有地区时不该出现空括号，实得 %q", got)
 	}
 }
 

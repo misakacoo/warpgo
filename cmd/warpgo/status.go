@@ -33,22 +33,21 @@ type statusView struct {
 	Endpoint string    `json:"endpoint,omitempty"`
 	UpSince  time.Time `json:"up_since"`
 	Exists   bool      `json:"interface_exists"`
-	// ExitIP / ExitLoc / ExitCheckedAt 是**上一次体检看到的公网出口**。
+	// ExitV4 / ExitV6 是**上一次体检看到的公网出口**，按地址族各一份。
 	//
-	// 它回答的是"访问网站时别人看到的 IP"，与 `addresses`（隧道内部的私有地址）
+	// 它们回答的是"访问网站时别人看到的 IP"，与 `addresses`（隧道内部的私有地址）
 	// 是两件不同的事 —— 后者拿不去判断"我的 IP 变了吗"。值由 up / switch / on
 	// 与保活体检写进运行态，所以这里是**缓存**而不是此刻的事实：
-	// 后面那个时间戳就是给这件事兜底的（菜单里也带着它）。
+	// 每条记录自带的时间戳就是给这件事兜底的（菜单里也带着它）。
 	//
-	// ExitCheckedAt 用字符串而不是 time.Time：它是可缺省的缓存时间戳，
-	// 而 time.Time 的零值在 JSON 里会变成 "0001-01-01T00:00:00Z" ——
-	// 一个看起来像真数据的垃圾值（omitempty 对结构体不起作用）。
-	ExitIP      string `json:"exit_ip,omitempty"`
-	ExitLoc     string `json:"exit_loc,omitempty"`
-	ExitChecked string `json:"exit_checked_at,omitempty"`
-	WGPublic    string `json:"wg_public_key,omitempty"`
-	WGPort      int    `json:"wg_listen_port,omitempty"`
-	Handshaked  bool   `json:"handshaked"`
+	// 直接复用 state.Exit 而不是在这里再摊平成几个字符串字段：两边描述的是
+	// 同一份数据，"运行态里有什么"与"--json 里有什么"各写一套必然漂移。
+	// 指针为 nil 时整条记录都不输出 —— 不会出现零值时间戳这种"看着像真数据"的垃圾。
+	ExitV4     *state.Exit `json:"exit_ipv4,omitempty"`
+	ExitV6     *state.Exit `json:"exit_ipv6,omitempty"`
+	WGPublic   string      `json:"wg_public_key,omitempty"`
+	WGPort     int         `json:"wg_listen_port,omitempty"`
+	Handshaked bool        `json:"handshaked"`
 	// DaemonRunning 只在用户态后端下有意义。
 	DaemonRunning bool `json:"userspace_daemon_running,omitempty"`
 	// Reserved 是账户里那 3 个字节（内核后端发的是 0,0,0）。
@@ -137,9 +136,8 @@ func newStatusView(rt *state.Runtime, st tunnel.Status, daemon bool, reserved st
 		Endpoint:         rt.Endpoint,
 		UpSince:          rt.UpSince,
 		Exists:           st.Exists,
-		ExitIP:           rt.ExitIP,
-		ExitLoc:          rt.ExitLoc,
-		ExitChecked:      formatCheckedAt(rt.ExitAt),
+		ExitV4:           rt.ExitV4,
+		ExitV6:           rt.ExitV6,
 		WGPublic:         st.PublicKey,
 		WGPort:           st.ListenPort,
 		Handshaked:       st.HasHandshake(),
@@ -189,12 +187,27 @@ func (a *app) printStatus(rt *state.Runtime, st tunnel.Status, daemon bool, rese
 		{"up_since", rt.UpSince.UTC().Format(time.RFC3339)},
 		{"interface_exists", yesNo(st.Exists)},
 	}
-	// 公网出口排在 addresses 后面：两者放一起才看得出"内部地址 ≠ 我的 IP"。
-	// 措辞与菜单共用 exitSummary —— 同一个值的两种呈现不该各说各话。
-	if summary := exitSummary(rt); summary != "" {
-		fields = append(fields, [2]string{"exit_ip", summary})
-	} else {
-		fields = append(fields, [2]string{"exit_ip", msg.T(msg.KeyExitUnknown)})
+	// 公网出口按族各一行、排在 addresses 后面：两者放一起才看得出
+	// "内部地址 ≠ 我的 IP"。措辞与菜单共用 exitAgo ——
+	// 同一个值的两种呈现不该各说各话（第一版就漂过：一边"出口 IP 未知"，
+	// 一边"还没体检过"）。
+	//
+	// 只列隧道实际携带的族：单栈隧道下列一个永远为空的 exit_ipv6，
+	// 会让读它的脚本以为"v6 出问题了"，而真相是"这条隧道本来就不带 v6"。
+	exitFamilies := rt.Families
+	if len(exitFamilies) == 0 {
+		exitFamilies = []int{state.FamilyV4, state.FamilyV6}
+	}
+	for _, fam := range exitFamilies {
+		key := "exit_ipv4"
+		if fam == state.FamilyV6 {
+			key = "exit_ipv6"
+		}
+		val := msg.T(msg.KeyExitUnknown)
+		if e := rt.ExitFor(fam); e != nil && e.IP != "" {
+			val = exitAgo(e)
+		}
+		fields = append(fields, [2]string{key, val})
 	}
 	if reserved != "" {
 		// 内核后端在结构上带不了那 3 个字节 —— 把账户里的值和"实际发出去的"并排说清，
@@ -236,17 +249,6 @@ func (a *app) printStatus(rt *state.Runtime, st tunnel.Status, daemon bool, rese
 	for _, f := range fields {
 		fmt.Fprintf(a.stdout, "  %-18s %s\n", f[0], f[1])
 	}
-}
-
-// formatCheckedAt 把"出口 IP 是什么时候体检出来的"格式化成 RFC3339。
-//
-// 零值给空串（而不是 0001-01-01）：JSON 里一个看起来像真数据的垃圾值，
-// 比一个缺字段更容易骗过读它的人与脚本。
-func formatCheckedAt(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339)
 }
 
 func peerEndpoint(st tunnel.Status) string {
