@@ -76,7 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/misakacoo/warpgo/main/install.sh | 
   隧道起来**并装好保活**（内部就是 `up --keepalive`，见下）。
 - 没有可用终端时（无人值守、或 `ssh` 不带 `-t`）自动退化成"只装二进制与依赖"，
   结束时把该做的事打印出来 —— 不猜你的意图。
-- `--version v0.1.1` 装指定版本、`--prefix` 换安装目录（目录不存在会自己建）。
+- `--version v0.1.2` 装指定版本、`--prefix` 换安装目录（目录不存在会自己建）。
   重装（路径上已有旧二进制）时会把旧的留成 `<prefix>/warpgo.bak` 并在结束时提醒你；
   不想留就用 `--no-backup`。
 
@@ -98,7 +98,7 @@ curl -fsSL https://raw.githubusercontent.com/misakacoo/warpgo/main/install.sh | 
 <https://github.com/misakacoo/warpgo/releases/latest>。
 
 ```bash
-VERSION=v0.1.1
+VERSION=v0.1.2
 ARCH=amd64          # 或 arm64
 
 BASE="https://github.com/misakacoo/warpgo/releases/download/${VERSION}"
@@ -127,7 +127,7 @@ warpgo version
 ```bash
 git clone https://github.com/misakacoo/warpgo.git
 cd warpgo
-VERSION=0.1.1 ./build.sh          # 产出 dist/warpgo（不传则记作 dev）
+VERSION=0.1.2 ./build.sh          # 产出 dist/warpgo（不传则记作 dev）
 sudo install -m 0755 dist/warpgo /usr/bin/warpgo
 ```
 
@@ -756,8 +756,8 @@ sudo warpgo uninstall --keep-binary
 
 ```bash
 ./build.sh                      # 只为本机构建 → dist/warpgo（版本号记作 dev）
-VERSION=0.1.1 ./build.sh        # 指定版本号
-TAG=v0.1.1 ./build.sh release   # 交叉编译 amd64 + arm64 → tar.gz + checksums.txt
+VERSION=0.1.2 ./build.sh        # 指定版本号
+TAG=v0.1.2 ./build.sh release   # 交叉编译 amd64 + arm64 → tar.gz + checksums.txt
 ```
 
 ### 单元测试

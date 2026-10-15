@@ -20,7 +20,7 @@
 #
 # 用法:
 #   install.sh                       # 交互（推荐）：装完进菜单
-#   install.sh --version v0.1.1      # 装指定版本
+#   install.sh --version v0.1.2      # 装指定版本
 #   install.sh --yes                 # 非交互：只装二进制与依赖，不做后续
 #   install.sh --with-tunnel         # 非交互：再顺手注册 + 建非全局隧道 + 装保活（无人值守用）
 #   install.sh --prefix /usr/local/bin
@@ -58,7 +58,7 @@ warpgo 一键安装脚本
 
 用法:
   install.sh                       # 交互（推荐）：装完进菜单
-  install.sh --version ${WANT_TAG:-v0.1.1}      # 装指定版本
+  install.sh --version ${WANT_TAG:-v0.1.2}      # 装指定版本
   install.sh --yes                 # 非交互：只装二进制与依赖，不做后续
   install.sh --with-tunnel         # 非交互：再顺手注册 + 建非全局隧道 + 装保活（无人值守用）
   install.sh --prefix /usr/local/bin
@@ -82,7 +82,7 @@ EOF
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--version)
-		[ $# -ge 2 ] || die "--version 后面要给一个 tag，例如 --version v0.1.1"
+		[ $# -ge 2 ] || die "--version 后面要给一个 tag，例如 --version v0.1.2"
 		WANT_TAG=$2
 		shift 2
 		;;
@@ -148,7 +148,7 @@ detect_arch() {
 
 # 用 /releases/latest 的**重定向**解析 tag，而不是调 API：
 # 不撞未认证的速率限制，也不需要 jq 之类的 JSON 工具。
-# 最终地址形如 https://github.com/<repo>/releases/tag/v0.1.1。
+# 最终地址形如 https://github.com/<repo>/releases/tag/v0.1.2。
 resolve_latest_tag() {
 	local url
 	url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$LATEST_URL") ||
@@ -159,7 +159,7 @@ resolve_latest_tag() {
 TAG=${WANT_TAG:-$(resolve_latest_tag)}
 case "$TAG" in
 v[0-9]*) ;;
-*) die "版本号看起来不对: $TAG（应当形如 v0.1.1）" ;;
+*) die "版本号看起来不对: $TAG（应当形如 v0.1.2）" ;;
 esac
 
 ARCH=$(detect_arch)

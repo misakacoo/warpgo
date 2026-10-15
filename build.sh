@@ -6,8 +6,8 @@
 #
 # 用法:
 #   ./build.sh                       # 只为本机构建到 dist/warpgo（版本号记作 dev）
-#   VERSION=0.1.1 ./build.sh
-#   TAG=v0.1.1 ./build.sh release    # 交叉编译发布产物（amd64 + arm64）+ checksums.txt
+#   VERSION=0.1.2 ./build.sh
+#   TAG=v0.1.2 ./build.sh release    # 交叉编译发布产物（amd64 + arm64）+ checksums.txt
 set -euo pipefail
 
 cd "$(dirname "$0")"
