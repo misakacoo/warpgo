@@ -60,7 +60,31 @@ warpgo 负责把一台 Debian 机器接入 Cloudflare WARP：注册设备、建�
 
 ## 安装
 
-### 从 Release 安装（推荐）
+### 一键安装（推荐）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/misakacoo/warpgo/main/install.sh | sudo bash
+```
+
+脚本只做这四件事：探架构 → 解析最新版本 → 下载并**校验 sha256** → 装到 `/usr/bin/warpgo`。
+然后把选择权交回给你：
+
+- **交互运行时**装完会问一句要不要继续 —— 注册账户 / 建隧道（非全局）/ 装保活服务。
+  机器上**已有账户会自动把那几项换成对应的选项**，不会摆一个注定失败的"注册"给你按
+  （`register` 在已有账户时会拒绝：换注册等于换出口 IP，必须是显式决定）；
+- **非交互**（`--yes`）只装二进制，不做任何后续；`--with-tunnel` 才会一路装到隧道起来。
+- `--version v0.1.1` 装指定版本、`--prefix` 换安装目录。
+  重装（路径上已有旧二进制）时会把旧的留成 `<prefix>/warpgo.bak` 并在结束时提醒你；
+  不想留就用 `--no-backup`。
+
+> **关于信任**：脚本走 HTTPS 从 GitHub 的 `main` 分支取，但**没有独立签名** ——
+> 想先审一遍就把 `| sudo bash` 换成 `| less`。它下载的产物是**有**校验的
+> （同 Release 的 `checksums.txt`），**校验不过就停，而且在校验通过之前不动系统里的任何东西**。
+>
+> 另一面：脚本跟着 `main` 走，所以它可能比最新 Release 还新。真出现"脚本要的资产还没有"
+> 时，它会明确报错并让你 `--version` 指定一个已发布的版本，而不是猜。
+
+### 手动安装：从 Release
 
 发布产物按架构打包：`warpgo_<版本>_linux_<架构>.tar.gz`，并附带 `checksums.txt`。
 下面的 `VERSION` 换成你要的那个版本，最新版本号见

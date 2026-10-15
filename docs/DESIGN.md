@@ -194,6 +194,7 @@ warpgo/
 │                       m8-client.sh m9-update.sh
 ├── .github/workflows/release.yml                 # 打 tag 时构建两架构 + 出 checksums.txt（M9）
 ├── LICENSE                                       # GPL-3.0（派生作品，保留原作者署名）
+├── install.sh       ✅ 一键安装（curl | sudo bash）：探架构 → 解析最新 tag → 校验 → 装
 ├── build.sh         ✅ ./build.sh 产出 dist/warpgo；./build.sh release 出发布产物
 └── （原计划的 third_party/wireguard-go/ 与 internal/split/ 都已**取消** —— 见 §8.2 与 §3）
 ```
@@ -884,6 +885,29 @@ warpgo version --self-update --no-restart     # 不重启保活单元
   唯一会联外网的是显式要求的那条路（`version --check`、`rotate`、`proxy install` 的下载）。
 
   单测守着这条边界：`internal/msg` 与 `cmd` 里不允许出现任何与统计/上报相关的 key 或字符串。
+
+**一键安装脚本 `install.sh`**（仓库根，`curl … | sudo bash`）：它是**薄壳**，不复制任何
+warpgo 自己的逻辑 —— 探架构、解析最新 tag、下载、校验、`install`，剩下的统统转交子命令
+（`register` / `up` / `install`）。几处刻意的地方：
+
+- **提问一律从 `/dev/tty` 读**。`curl | bash` 时 stdin 是脚本本身，直接 `read` 会把它当输入
+  吃掉 —— 这是一个**只在管道下发作、本地 `bash install.sh` 完全正常**的坑。
+  没有可用 tty 时退化成 `--yes`（只装二进制），不猜用户意图。
+- **最新 tag 用 `/releases/latest` 的重定向解析**（`curl -w '%{url_effective}'`），不调 API：
+  不撞未认证的速率限制，也不需要 `jq` 这类 JSON 工具。
+- **只核对自己那一个文件**，不是整份 `sha256sum -c checksums.txt` —— 清单里两个架构都列着，
+  只下一个时整份校验会报 `FAILED open or read`、退出码 1（与 README 修掉的是同一个坑）。
+  匹配时按 basename 比，容忍清单里带不带 `./` 前缀。
+- **先装到 `${BIN}.new.$$` 再 `mv` 覆盖**，与 `writeFileAtomic` 同一个理由：直接往正在执行的
+  路径上写会撞 `ETXTBSY`，中途失败还会留下半个二进制。保活单元在跑就重启它 ——
+  不重启等于"装了但没生效"。
+- **菜单按现场状态给**：已有账户就不摆"注册"（`register` 会拒绝 —— 换注册等于换出口 IP，
+  必须是显式决定）。`have_account` 直接拿 `warpgo account` 当探针，不在这里重复拼
+  `/etc/warpgo/account.json` 的路径：路径知识只该有一处（`internal/state`，且它认
+  `WARPGO_ETC` 覆盖）。
+- **脚本自身没有独立签名**，README 里明说了这点并给了 `| less` 的审阅方式；有校验和的是
+  它下载的产物。**代价**：脚本跟着 `main` 走，可能领先于最新 Release；真出现"脚本要的资产
+  还没有"时它明确报错并要求用 `--version` 指定已发布的版本，不猜。
 
 ### 8.15 文案（只有简体中文）
 
