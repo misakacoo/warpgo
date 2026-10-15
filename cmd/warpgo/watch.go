@@ -195,6 +195,12 @@ func (a *app) watchCheck(ctx context.Context, ifName string, families []int) (st
 	if err != nil {
 		return "", err
 	}
+	// 顺手把"公网出口"更新到运行态（菜单要显示它）。
+	// 只在 warp=on 时才记：warp=off 时拿到的 IP 是宿主自己的出口，
+	// 记下来会让菜单撒一个非常具体的谎。
+	if res.WarpOn() {
+		a.recordExitFrom(res)
+	}
 	return res.String(), nil
 }
 

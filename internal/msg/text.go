@@ -8,7 +8,9 @@ var text = map[string]string{
 （fscarmen/warp 的 Go 重写版；只支持 Debian，不含 Docker，不适配其他平台）
 
 用法:
+  warpgo                交互菜单（在终端里直接敲，不用记子命令）
   warpgo <子命令> [选项]
+                        （没终端时裸敲 warpgo 印这份用法，不进菜单）
 
 账户:
   register             注册一个新的 WARP 设备并保存账户
@@ -23,7 +25,7 @@ var text = map[string]string{
   status               查看当前状态（--json 给脚本用）
   rotate               重新注册换一个 WARP 出口地址
   switch               在线互换后端（内核 / 用户态）或工作模式
-  priority             地址族优先级：4 = IPv4 优先，6 = IPv6 优先，d = 系统默认
+  priority             优先走 IPv4 还是 IPv6：4 = 优先 IPv4，6 = 优先 IPv6，d = 系统默认
   proxy                WireProxy：把 WARP 做成一个本地 socks5 出口
   client               官方 WARP 客户端：install / mode / on / off / status / uninstall
 
@@ -34,7 +36,7 @@ var text = map[string]string{
   confirm              保留本次变更并解除回滚保险丝
 
 其他:
-  menu                 交互菜单（每个选项就是一条子命令）
+  menu                 交互菜单（显式形式，与裸敲 warpgo 相同）
   version              显示版本信息；--check 查新版本，--self-update 自我更新
   help                 显示本帮助
   dev lock             演练单实例锁（开发调试用）
@@ -138,6 +140,21 @@ var text = map[string]string{
 	KeyUpReasonNotDebian:    "不是 Debian 系统",
 	KeyUpStackRebuild:       "栈从 %s 变成 %s —— 接口上原来那一族的地址不会自己消失，改为先拆后建",
 	KeyUpReasonError:        "执行出错",
+
+	// 公网出口 IP：建完顺手探一次，记进运行态（菜单要显示它）。
+	//
+	// 说明里那句"地区"用的是 trace 报的 loc 字段（JP / HKG 这种），
+	// 它跟"出口 IP"是同一份探测结果，分开报会让两行信息对不上。
+	KeyUpExitIP:      "公网出口 IP: %s（%s）",
+	KeyUpExitUnknown: "这次没能探到公网出口 IP（不影响隧道可用，也不影响任何功能）",
+
+	// status / 菜单里那句"公网出口 IP"（共用同一套措辞，见 keys.go 的注释）。
+	//
+	// "刚刚实测"单列一条：刚体检完写成"0 秒前实测"读着别扭，而这种情况很常见
+	// （`up` 一结束就打开菜单看）。
+	KeyExitLine:    "%s，%s前实测",
+	KeyExitJustNow: "%s，刚刚实测",
+	KeyExitUnknown: "还没体检过（重建隧道或等保活巡检一次就有了）",
 
 	KeyDownStart:   "正在拆除 WARP 隧道",
 	KeyDownNothing: "没有需要拆除的东西（接口、残留规则与路由都不存在）",
@@ -377,45 +394,85 @@ install 的选项:
 	KeyHookNeedRoot:    "%s 需要 root 权限（要改策略路由）",
 
 	// 交互菜单（M8）
+	//
+	// 分组标题与选项分开两个 key：标题用「账户 / 隧道 / …」这种名词，
+	// 它们同时也是 §2 功能矩阵里的分类名，改的时候记得两边一起看。
 	KeyMenuTitle:         "warpgo 交互菜单",
 	KeyMenuPrompt:        "请选择> ",
 	KeyMenuQuit:          "退出",
 	KeyMenuBye:           "再见。",
 	KeyMenuBadChoice:     "不认识的选择: %s",
 	KeyMenuSubFailed:     "`%s` 以退出码 %d 结束",
+	KeyMenuConfirm:       "要执行「%s」吗？[y/N] ",
+	KeyMenuCanceled:      "已取消（这次什么都没做）",
 	KeyMenuNoRuntime:     "还没有运行态（先 `up` 一次），不知道当前用的是哪个",
 	KeyMenuSwitchTo:      "当前 %s → 将切到 %s",
-	KeyMenuAskPriority:   "地址族优先级（4 = IPv4 优先，6 = IPv6 优先，d = 系统默认）> ",
-	KeyMenuUpNonGlobal:   "建立隧道（非全局，不会切断 SSH）",
-	KeyMenuUpGlobal:      "建立隧道（全局接管，带自动回滚）",
+	KeyMenuAskPriority:   "选先走哪一族: 4 = 优先 IPv4, 6 = 优先 IPv6, d = 不干预（按系统默认）> ",
+	KeyMenuPriorityV4:    "已选择：优先 IPv4",
+	KeyMenuPriorityV6:    "已选择：优先 IPv6",
+	KeyMenuPriorityDef:   "已选择：不干预（按系统默认）",
+	KeyMenuSecAccount:    "账户",
+	KeyMenuSecTunnel:     "隧道",
+	KeyMenuSecClient:     "Cloudflare 官方客户端",
+	KeyMenuSecProxy:      "WireProxy 方案",
+	KeyMenuSecMaint:      "保活与维护",
+	KeyMenuRegister:      "注册一个新的 WARP 设备（没有账户、或想换个身份）",
+	KeyMenuAccount:       "查看本机账户（只读，不联网）",
+	KeyMenuUpNonGlobal:   "建立隧道 —— 非全局（只让指定流量走 WARP，不会切断 SSH）",
+	KeyMenuUpGlobal:      "建立隧道 —— 全局接管（整机流量都走 WARP，可能切断 SSH）",
 	KeyMenuDown:          "拆除隧道（清空全部残留）",
 	KeyMenuOff:           "临时关闭（保留配置，可随时恢复）",
 	KeyMenuOn:            "恢复隧道（按上次的配置）",
 	KeyMenuStatus:        "查看状态",
 	KeyMenuRotate:        "换一个出口 IP（重新注册）",
-	KeyMenuSwitchBackend: "在线互换后端（内核 ↔ 用户态）",
-	KeyMenuSwitchMode:    "在线互换工作模式（非全局 ↔ 全局）",
-	KeyMenuPriority:      "地址族优先级",
-	KeyMenuClientProxy:   "官方客户端：安装为 socks5 代理",
-	KeyMenuClientWarp:    "官方客户端：安装为 WARP 模式",
-	KeyMenuClientToggle:  "官方客户端：开关",
-	KeyMenuClientStatus:  "官方客户端：状态",
-	KeyMenuProxyInstall:  "WireProxy：安装",
-	KeyMenuProxyToggle:   "WireProxy：开关",
-	KeyMenuInstallWatch:  "保活：装成 systemd 服务",
-	KeyMenuUninstall:     "卸载 warpgo",
+	KeyMenuSwitchBackend: "换隧道方式（内核直通 ↔ 用户态兼容）",
+	KeyMenuSwitchMode:    "换接管范围（非全局 ↔ 全局）",
+	KeyMenuPriority:      "优先走 IPv4 还是 IPv6",
+	KeyMenuClientProxy:   "安装为 socks5 代理（在本机开一个代理端口）",
+	KeyMenuClientWarp:    "安装为 WARP 模式（会接管默认路由）",
+	KeyMenuClientToggle:  "开关（按当前状态）",
+	KeyMenuClientStatus:  "状态",
+	KeyMenuProxyInstall:  "安装",
+	KeyMenuProxyToggle:   "开关（按当前状态）",
+	KeyMenuProxyStatus:   "状态",
+	KeyMenuInstallWatch:  "把保活装成开机自启的服务（断了自动重建）",
+	KeyMenuCheckUpdate:   "查有没有新版本",
+	KeyMenuUninstall:     "卸载 warpgo（连隧道、服务、残留一起撤掉）",
+
+	// 隧道方式 / 接管方式的"人话"名字与取舍说明。
+	//
+	// 名字与说明成对存在：菜单状态行要用短名字（一行放不下解释），
+	// 选项 9 / 10 的提示要用解释。两者分开，改一个不会把另一个挤变形。
+	//
+	// 这几条与"地址族优先级 → 优先走 IPv4 还是 IPv6"是同一类改动：
+	// 用户实测的原话是"内核 用户态，谁知道是什么"「地址族？你不如叫
+	// IPV4 还是 IPV6 不是更好嘛」。菜单上的词要能**不经解释就看懂**，
+	// 行话留给 `status` / `--json` / DESIGN。
+	KeyMenuBackendKernel:        "内核直通",
+	KeyMenuBackendUserspace:     "用户态兼容",
+	KeyMenuBackendHintKernel:    "内核直通：加密交给系统内核做，吞吐最好；代价是它带不了账户里的 reserved 三字节，少数地区/账户会连不通",
+	KeyMenuBackendHintUserspace: "用户态兼容：加密由本工具的进程做，能把 reserved 一起发出去，兼容性最好；代价是略微慢一点",
+	KeyMenuModeGlobal:           "全局接管",
+	KeyMenuModeNonGlobal:        "非全局",
+	KeyMenuModeHintGlobal:       "全局接管：整机流量都走 WARP，会接管默认路由（SSH 可能断，所以带自动回滚）",
+	KeyMenuModeHintNonGlobal:    "非全局：只让「以 WARP 接口为源」的流量走 WARP，不动默认路由，不会切断 SSH",
 
 	// 临时关闭与恢复（上游菜单 `o`）
 	KeyOffKeptRuntime: "已保留运行态 —— 下次 `warpgo on` 会按这份配置原样恢复",
 	KeyOffDone:        "隧道已临时关闭（配置与保活单元都留着）。恢复：`warpgo on`",
 	KeyOnWatchStarted: "已把保活服务 %s 拉回来",
 
-	// 菜单顶部那行状态摘要
+	// 菜单顶部那两行状态摘要
+	//
+	// 注意没有"隧道地址"这一项：`172.16.0.2` 那种是隧道内部的私有地址，
+	// 与"访问网站时别人看到的 IP"是两回事。菜单里放它会让人拿它去判断
+	// "我的 IP 变了吗"，而那个结论一定是错的（用户实测反馈过这一点）。
+	// 想看隧道地址用选项「查看状态」—— 那里才是诊断信息该在的地方。
 	KeyMenuStatusUp:        "隧道 %s",
 	KeyMenuStatusDown:      "隧道未建立",
 	KeyMenuStatusMode:      "模式 %s",
 	KeyMenuStatusBackend:   "后端 %s",
-	KeyMenuStatusAddrs:     "地址 %s",
+	KeyMenuStatusExitIP:    "出口 IP %s",
 	KeyMenuStatusAccount:   "账户 %s",
 	KeyMenuStatusNoAccount: "未注册",
 

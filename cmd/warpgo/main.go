@@ -45,8 +45,7 @@ func run(args []string) int {
 	rest := a.parseGlobal(args)
 
 	if len(rest) == 0 {
-		a.printUsage()
-		return exitOK
+		return a.runDefault()
 	}
 
 	cmd, cmdArgs := rest[0], rest[1:]
@@ -142,6 +141,47 @@ func (a *app) parseGlobal(args []string) []string {
 
 func (a *app) printUsage() {
 	fmt.Fprintln(a.stdout, msg.T(msg.KeyUsage))
+}
+
+// runDefault 处理裸 `warpgo`（没给任何子命令）。
+//
+// 这里**必须**进交互菜单，而不是印用法 —— 上游 `warp` 就是裸敲进菜单的，
+// 菜单的意义正是"不用记子命令"；印一份四十行用法给一个只会敲 `warpgo` 的人，
+// 等于把记忆负担原样推回去（用户实测就是这么被绊住的：装完敲 `warpgo`，
+// 看到的是一屏用法，而不是菜单）。
+//
+// 但**没有终端时不能进菜单**：stdin 是管道 / /dev/null 时菜单读不到输入，
+// 只会印一遍菜单然后安静退出（看着像"卡住"或"什么都没发生"），
+// 而那种场合（脚本、CI、`ssh host warpgo` 不带 -t）本来要的就是用法。
+func (a *app) runDefault() int {
+	if !stdinIsTerminal() {
+		a.printUsage()
+		return exitOK
+	}
+	return a.cmdMenu(nil)
+}
+
+// stdinIsTerminal 判断"当前能不能真的读到人的输入"。
+//
+// 只看 `os.Stdin.Stat()` 的字符设备标志位是不够的 —— `/dev/null` 也是字符设备，
+// `warpgo </dev/null` 会被误判成终端。真正的判据是**有没有控制终端**：
+// 没有控制终端时 `open("/dev/tty")` 给 ENXIO（设备节点权限是 666，
+// 所以 `access(2)` / `[ -r /dev/tty ]` 那一套会说"可读"，这一点 install.sh
+// 的 has_tty 里踩过同一个坑）。
+//
+// 两级检查都要：字符设备过滤掉管道与普通文件（正则文件也能 open，但不是终端），
+// open(/dev/tty) 过滤掉 `/dev/null` 这类"是字符设备却没控制终端"的现场。
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	_ = tty.Close()
+	return true
 }
 
 // cmdVersion 已移到 version.go —— 它现在不只是一行信息，还要能查新版本

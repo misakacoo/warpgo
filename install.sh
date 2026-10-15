@@ -265,8 +265,8 @@ finish() {
 	cat <<EOF
 
 完成。常用命令：
+  warpgo                          交互菜单（直接敲它，不用记子命令）
   warpgo status                   看当前状态
-  warpgo menu                     交互菜单（每个选项就是一条子命令）
   warpgo version --self-update    升级到最新版本
   warpgo uninstall                撤干净（单元、隧道、二进制、DNS 改动）
 EOF

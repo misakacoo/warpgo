@@ -49,6 +49,23 @@ func (a *app) cmdUp(args []string) int {
 	if err != nil {
 		return a.fail(err)
 	}
+	// --backend 没给时**沿用运行态里记的"用户当初要求的那个"**。
+	//
+	// 这一条 `on` / `watch` / `rotate` 都有，`up` 原先漏了 —— 于是
+	// "用菜单换成用户态兼容、再点一次建立隧道"会悄悄换回内核直通。
+	// 道理与 rotate 里那句注释同源：**用户的选择不该被一次常规操作抹掉**。
+	//
+	// 沿用的是**要求**（auto / kernel / userspace）而不是实际用上的那个：
+	// 拿实际值当默认，会把一次自动回落永久钉死成 userspace（见 state.Runtime）。
+	//
+	// **`--mode` 刻意不跟着沿用**：`up` 的默认必须永远是"非全局"。
+	// 模式决定要不要接管默认路由，一个没带参数的 `up` 不该有可能切断正在用的 SSH ——
+	// 想恢复上次的全局模式用 `warpgo on`（它才是"按上次那份配置原样恢复"）。
+	if backendStr == "" {
+		if rt, rerr := state.LoadRuntime(state.RuntimePath()); rerr == nil && rt.BackendRequested != "" {
+			backendStr = rt.BackendRequested
+		}
+	}
 	backend, err := tunnel.ParseBackend(backendStr)
 	if err != nil {
 		return a.fail(err)

@@ -193,6 +193,21 @@ const (
 	// 换栈必须重建（上游菜单 4 / 6 / d）
 	KeyUpStackRebuild = "up.stack_rebuild"
 
+	// 公网出口 IP（建成之后顺手探一次，记进运行态给菜单用）
+	KeyUpExitIP      = "up.exit_ip"
+	KeyUpExitUnknown = "up.exit_unknown"
+
+	// 公网出口 IP 的展示文案：菜单与 `status` **共用同一套**。
+	//
+	// 共用的理由很实际：它们是同一个值的两种呈现，措辞不一致会让人
+	// 以为是两个东西（"出口 IP" 与 "exit_ip" 各说各话已经很勉强了）。
+	//
+	// 为什么不按 `menu.` / `status.` 各写一份：这两处显示的是**同一件事**，
+	// 分开写必然漂移（第一版就漂了 —— 一边"出口 IP 未知"，一边"还没体检过"）。
+	KeyExitLine    = "exit.line"
+	KeyExitJustNow = "exit.just_now"
+	KeyExitUnknown = "exit.unknown"
+
 	// 换 IP（M5）
 	KeyRotateStart       = "rotate.start"
 	KeyRotateAttempt     = "rotate.attempt"
@@ -323,9 +338,14 @@ const (
 	KeyMenuBye           = "menu.bye"
 	KeyMenuBadChoice     = "menu.bad_choice"
 	KeyMenuSubFailed     = "menu.sub_failed"
+	KeyMenuConfirm       = "menu.confirm"
+	KeyMenuCanceled      = "menu.canceled"
 	KeyMenuNoRuntime     = "menu.no_runtime"
 	KeyMenuSwitchTo      = "menu.switch_to"
 	KeyMenuAskPriority   = "menu.ask_priority"
+	KeyMenuPriorityV4    = "menu.priority_v4"
+	KeyMenuPriorityV6    = "menu.priority_v6"
+	KeyMenuPriorityDef   = "menu.priority_default"
 	KeyMenuUpNonGlobal   = "menu.up_non_global"
 	KeyMenuUpGlobal      = "menu.up_global"
 	KeyMenuDown          = "menu.down"
@@ -344,18 +364,39 @@ const (
 	KeyMenuProxyToggle   = "menu.proxy_toggle"
 	KeyMenuInstallWatch  = "menu.install_watch"
 	KeyMenuUninstall     = "menu.uninstall"
+	KeyMenuRegister      = "menu.register"
+	KeyMenuAccount       = "menu.account"
+	KeyMenuProxyStatus   = "menu.proxy_status"
+	KeyMenuCheckUpdate   = "menu.check_update"
+
+	// 隧道方式 / 接管方式的人话名字与取舍说明
+	KeyMenuBackendKernel        = "menu.backend_kernel"
+	KeyMenuBackendUserspace     = "menu.backend_userspace"
+	KeyMenuBackendHintKernel    = "menu.backend_hint_kernel"
+	KeyMenuBackendHintUserspace = "menu.backend_hint_userspace"
+	KeyMenuModeGlobal           = "menu.mode_global"
+	KeyMenuModeNonGlobal        = "menu.mode_non_global"
+	KeyMenuModeHintGlobal       = "menu.mode_hint_global"
+	KeyMenuModeHintNonGlobal    = "menu.mode_hint_non_global"
+
+	// 菜单分组标题（M8）
+	KeyMenuSecAccount = "menu.sec_account"
+	KeyMenuSecTunnel  = "menu.sec_tunnel"
+	KeyMenuSecClient  = "menu.sec_client"
+	KeyMenuSecProxy   = "menu.sec_proxy"
+	KeyMenuSecMaint   = "menu.sec_maint"
 
 	// 临时关闭与恢复（上游菜单 `o`）
 	KeyOffKeptRuntime = "off.kept_runtime"
 	KeyOffDone        = "off.done"
 	KeyOnWatchStarted = "on.watch_started"
 
-	// 菜单顶部那行状态摘要（M8，纯本地读取，不联网）
+	// 菜单顶部那两行状态摘要（M8，纯本地读取，不联网）
 	KeyMenuStatusUp        = "menu.status_up"
 	KeyMenuStatusDown      = "menu.status_down"
 	KeyMenuStatusMode      = "menu.status_mode"
 	KeyMenuStatusBackend   = "menu.status_backend"
-	KeyMenuStatusAddrs     = "menu.status_addrs"
+	KeyMenuStatusExitIP    = "menu.status_exit_ip"
 	KeyMenuStatusAccount   = "menu.status_account"
 	KeyMenuStatusNoAccount = "menu.status_no_account"
 
@@ -526,6 +567,11 @@ func AllKeys() []string {
 		KeyUpReasonNotDebian,
 		KeyUpReasonError,
 		KeyUpStackRebuild,
+		KeyUpExitIP,
+		KeyUpExitUnknown,
+		KeyExitLine,
+		KeyExitJustNow,
+		KeyExitUnknown,
 		KeyRotateStart,
 		KeyRotateAttempt,
 		KeyRotateSameAddr,
@@ -642,9 +688,14 @@ func AllKeys() []string {
 		KeyMenuBye,
 		KeyMenuBadChoice,
 		KeyMenuSubFailed,
+		KeyMenuConfirm,
+		KeyMenuCanceled,
 		KeyMenuNoRuntime,
 		KeyMenuSwitchTo,
 		KeyMenuAskPriority,
+		KeyMenuPriorityV4,
+		KeyMenuPriorityV6,
+		KeyMenuPriorityDef,
 		KeyMenuUpNonGlobal,
 		KeyMenuUpGlobal,
 		KeyMenuDown,
@@ -663,6 +714,23 @@ func AllKeys() []string {
 		KeyMenuProxyToggle,
 		KeyMenuInstallWatch,
 		KeyMenuUninstall,
+		KeyMenuRegister,
+		KeyMenuAccount,
+		KeyMenuProxyStatus,
+		KeyMenuCheckUpdate,
+		KeyMenuBackendKernel,
+		KeyMenuBackendUserspace,
+		KeyMenuBackendHintKernel,
+		KeyMenuBackendHintUserspace,
+		KeyMenuModeGlobal,
+		KeyMenuModeNonGlobal,
+		KeyMenuModeHintGlobal,
+		KeyMenuModeHintNonGlobal,
+		KeyMenuSecAccount,
+		KeyMenuSecTunnel,
+		KeyMenuSecClient,
+		KeyMenuSecProxy,
+		KeyMenuSecMaint,
 		KeyOffKeptRuntime,
 		KeyOffDone,
 		KeyOnWatchStarted,
@@ -670,7 +738,7 @@ func AllKeys() []string {
 		KeyMenuStatusDown,
 		KeyMenuStatusMode,
 		KeyMenuStatusBackend,
-		KeyMenuStatusAddrs,
+		KeyMenuStatusExitIP,
 		KeyMenuStatusAccount,
 		KeyMenuStatusNoAccount,
 		KeyUninstallClient,

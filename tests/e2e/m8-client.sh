@@ -311,13 +311,31 @@ fi
 # ---- 7. 交互菜单 ---------------------------------------------------------------
 
 section "7. 交互菜单"
+# 裸敲 `warpgo` 分两种现场，必须分开验：
+#   - 有终端 → 进菜单（这里造不出终端，留给人工/真机确认）；
+#   - 无终端 → 印用法。这一条是脚本安全的关键：管道里裸敲如果进了菜单，
+#     菜单会去读 stdin 当成选择，把调用方的输入吃掉。
+printf '' | "$BIN" >/tmp/m8-bare-notty.txt 2>&1 && ok "裸敲且无终端不报错" || bad "裸敲且无终端返回非 0"
+grep -q "用法:" /tmp/m8-bare-notty.txt && ok "裸敲且无终端时印用法" || bad "裸敲且无终端时没印用法"
+# 用"请选择"而不是"交互菜单"当判据：用法正文里也有"交互菜单"三个字（menu 那一行）。
+grep -q "请选择" /tmp/m8-bare-notty.txt && bad "没有终端却进了菜单（会吃 stdin）" || ok "没有终端时不会进菜单"
 printf '0\n' | "$BIN" menu >/tmp/m8-menu0.txt 2>&1 && ok "menu 选 0 能正常退出" || bad "menu 退出异常"
+grep -q "请选择" /tmp/m8-menu0.txt && ok "菜单确实在等输入" || bad "菜单没有提示符"
 grep -q "交互菜单" /tmp/m8-menu0.txt && ok "菜单标题正确" || bad "菜单没有标题"
 grep -q "建立隧道" /tmp/m8-menu0.txt && ok "菜单列出了隧道项" || bad "菜单缺少隧道项"
-printf '4\n0\n' | "$BIN" menu >/tmp/m8-menu4.txt 2>&1 && ok "menu 能执行子命令（选 4 = 查看状态）" || bad "menu 执行子命令失败"
-grep -q "WARP" /tmp/m8-menu4.txt && ok "子命令的输出出现在菜单里" || bad "没看到子命令输出"
+grep -q "官方客户端" /tmp/m8-menu0.txt && ok "菜单有分组标题" || bad "菜单没有分组标题"
+# 选项号会随菜单增删而变 —— 这里钉住"按当前表算出来的那一条"，
+# 否则编号一动，选 7 就可能变成"建立隧道"（在真机上会真的去建隧道）。
+printf '7\n0\n' | "$BIN" menu >/tmp/m8-menu-status.txt 2>&1 && ok "menu 能执行子命令（选 7 = 查看状态）" || bad "menu 执行子命令失败"
+grep -q "WARP" /tmp/m8-menu-status.txt && ok "子命令的输出出现在菜单里" || bad "没看到子命令输出"
 printf 'zz\n0\n' | "$BIN" menu >/tmp/m8-menu-bad.txt 2>&1 && ok "非法选择不致命" || bad "非法选择让菜单退出了"
 grep -q "不认识的选择" /tmp/m8-menu-bad.txt && ok "非法选择有明确提示" || bad "非法选择没有提示"
+# 会改机器状态的选项必须先问一次，且默认（回车 / n）= 不执行。
+# 这里用"选拆除隧道、然后说不"来验：隧道必须**还在** —— 这是"按错一位"的拦。
+printf '12\nn\n0\n' | "$BIN" menu >/tmp/m8-menu-cancel.txt 2>&1 && ok "取消路径不报错" || bad "取消路径异常"
+grep -q "要执行" /tmp/m8-menu-cancel.txt && ok "会改状态的选项先问一次" || bad "会改状态的选项没问确认"
+grep -q "已取消" /tmp/m8-menu-cancel.txt && ok "选 n 时明确说明已取消" || bad "取消没有提示"
+[ "$(tunnel_ok)" = "yes" ] && ok "选了 n 就真的没动隧道（误触被挡住）" || bad "选了 n 但隧道被拆掉了"
 
 # ---- 8. （可选）真实 warp 模式 --------------------------------------------------
 #

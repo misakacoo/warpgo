@@ -28,14 +28,27 @@ type statusView struct {
 	Table            int    `json:"table"`
 	Families         []int  `json:"families,omitempty"`
 	// Stack 是隧道携带哪几族地址（both / 4 / 6，上游菜单 `4`/`6`/`d`）。
-	Stack      string    `json:"stack,omitempty"`
-	Addrs      []string  `json:"addresses,omitempty"`
-	Endpoint   string    `json:"endpoint,omitempty"`
-	UpSince    time.Time `json:"up_since"`
-	Exists     bool      `json:"interface_exists"`
-	WGPublic   string    `json:"wg_public_key,omitempty"`
-	WGPort     int       `json:"wg_listen_port,omitempty"`
-	Handshaked bool      `json:"handshaked"`
+	Stack    string    `json:"stack,omitempty"`
+	Addrs    []string  `json:"addresses,omitempty"`
+	Endpoint string    `json:"endpoint,omitempty"`
+	UpSince  time.Time `json:"up_since"`
+	Exists   bool      `json:"interface_exists"`
+	// ExitIP / ExitLoc / ExitCheckedAt 是**上一次体检看到的公网出口**。
+	//
+	// 它回答的是"访问网站时别人看到的 IP"，与 `addresses`（隧道内部的私有地址）
+	// 是两件不同的事 —— 后者拿不去判断"我的 IP 变了吗"。值由 up / switch / on
+	// 与保活体检写进运行态，所以这里是**缓存**而不是此刻的事实：
+	// 后面那个时间戳就是给这件事兜底的（菜单里也带着它）。
+	//
+	// ExitCheckedAt 用字符串而不是 time.Time：它是可缺省的缓存时间戳，
+	// 而 time.Time 的零值在 JSON 里会变成 "0001-01-01T00:00:00Z" ——
+	// 一个看起来像真数据的垃圾值（omitempty 对结构体不起作用）。
+	ExitIP      string `json:"exit_ip,omitempty"`
+	ExitLoc     string `json:"exit_loc,omitempty"`
+	ExitChecked string `json:"exit_checked_at,omitempty"`
+	WGPublic    string `json:"wg_public_key,omitempty"`
+	WGPort      int    `json:"wg_listen_port,omitempty"`
+	Handshaked  bool   `json:"handshaked"`
 	// DaemonRunning 只在用户态后端下有意义。
 	DaemonRunning bool `json:"userspace_daemon_running,omitempty"`
 	// Reserved 是账户里那 3 个字节（内核后端发的是 0,0,0）。
@@ -124,6 +137,9 @@ func newStatusView(rt *state.Runtime, st tunnel.Status, daemon bool, reserved st
 		Endpoint:         rt.Endpoint,
 		UpSince:          rt.UpSince,
 		Exists:           st.Exists,
+		ExitIP:           rt.ExitIP,
+		ExitLoc:          rt.ExitLoc,
+		ExitChecked:      formatCheckedAt(rt.ExitAt),
 		WGPublic:         st.PublicKey,
 		WGPort:           st.ListenPort,
 		Handshaked:       st.HasHandshake(),
@@ -173,6 +189,13 @@ func (a *app) printStatus(rt *state.Runtime, st tunnel.Status, daemon bool, rese
 		{"up_since", rt.UpSince.UTC().Format(time.RFC3339)},
 		{"interface_exists", yesNo(st.Exists)},
 	}
+	// 公网出口排在 addresses 后面：两者放一起才看得出"内部地址 ≠ 我的 IP"。
+	// 措辞与菜单共用 exitSummary —— 同一个值的两种呈现不该各说各话。
+	if summary := exitSummary(rt); summary != "" {
+		fields = append(fields, [2]string{"exit_ip", summary})
+	} else {
+		fields = append(fields, [2]string{"exit_ip", msg.T(msg.KeyExitUnknown)})
+	}
 	if reserved != "" {
 		// 内核后端在结构上带不了那 3 个字节 —— 把账户里的值和"实际发出去的"并排说清，
 		// 否则这一行会让人以为它正在生效。
@@ -213,6 +236,17 @@ func (a *app) printStatus(rt *state.Runtime, st tunnel.Status, daemon bool, rese
 	for _, f := range fields {
 		fmt.Fprintf(a.stdout, "  %-18s %s\n", f[0], f[1])
 	}
+}
+
+// formatCheckedAt 把"出口 IP 是什么时候体检出来的"格式化成 RFC3339。
+//
+// 零值给空串（而不是 0001-01-01）：JSON 里一个看起来像真数据的垃圾值，
+// 比一个缺字段更容易骗过读它的人与脚本。
+func formatCheckedAt(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func peerEndpoint(st tunnel.Status) string {

@@ -275,19 +275,13 @@ func addressesDiffer(old, cand *cloudflare.Account) bool {
 //   - 隧道当前没在跑（比如先 down 再 rotate）
 //   - 探测本身失败（网络抖动）
 //
-// 必须确认 warp=on 才采信这个 IP：否则拿到的可能是宿主自己的出口地址，
-// 用它去比较会得出"IP 一点没变"这种完全错误的结论。
+// 采信口径与 probeExit 完全一致（必须 warp=on）—— rotate 的
+// "IP 到底变没变"就建立在这个判定上，两边不能各写一套。
 func (a *app) exitIP(ifName string) string {
-	if !netcfg.LinkExists(ifName) {
-		return ""
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*verifyTimeout)
 	defer cancel()
-	res, err := health.ProbeAny(ctx, []int{health.FamilyV4, health.FamilyV6}, health.Options{
-		Interface: ifName,
-		Timeout:   verifyTimeout,
-	})
-	if err != nil || !res.WarpOn() {
+	res, ok := a.probeExit(ctx, ifName, []int{health.FamilyV4, health.FamilyV6})
+	if !ok {
 		return ""
 	}
 	return res.IP

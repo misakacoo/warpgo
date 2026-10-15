@@ -52,6 +52,20 @@ type Runtime struct {
 	// 而 `on` 要靠这个字段知道当初改成了什么。
 	DNS []string `json:"dns,omitempty"`
 
+	// ExitIP / ExitLoc / ExitAt 是**上一次体检看到的公网出口**（空 = 还没体检过）。
+	//
+	// 为什么要把它持久化，而不是用时现探：菜单顶部那行状态要回答
+	// "我现在从哪个 IP 出去"，而那正是打开菜单的人最想知道的一件事；
+	// 但菜单是**纯观察**动作（不联网、不做探测、断网时也得能打开），
+	// 所以它只能读一个**已经记下来**的值。真实值由落盘的那一方负责写：
+	// `up` / `switch` / `on` 重建成功后探一次，保活每轮体检也顺手更新。
+	//
+	// 注意它**不是**隧道接口地址（172.16.0.2 那种）：那个是隧道内部的私有地址，
+	// 与"访问网站时对方看到的 IP"是两件事，混在一起会让人误判自己没走 WARP。
+	ExitIP  string    `json:"exit_ip,omitempty"`
+	ExitLoc string    `json:"exit_loc,omitempty"`
+	ExitAt  time.Time `json:"exit_checked_at,omitempty"`
+
 	UpSince time.Time `json:"up_since"`
 }
 

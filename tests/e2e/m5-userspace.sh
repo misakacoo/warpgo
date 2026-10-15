@@ -221,6 +221,20 @@ CT1=$(iface_ctime); DPID1=$(daemon_pid)
 [ "$DPID0" = "$DPID1" ] && ok "守护进程 PID 未变（$DPID0）" || bad "守护进程被重建了（$DPID0 → $DPID1）"
 grep -q '已存在，直接复用' /tmp/m5-up2.log && ok "日志明确说是复用" || bad "日志里没有复用提示"
 
+# ---- 1c-2. 不带 --backend 的 up 要沿用上次的选择 ------------------------------
+#
+# 这一条挡的是一次很具体的意外：用户用菜单换成"用户态兼容"之后，再点一次
+# "建立隧道"，结果被悄悄换回内核 —— 而那个账户恰恰是要 reserved 才通的。
+# 判据取的是 `backend_requested`（用户的**要求**），不是 `backend`（实际用上的）：
+# 后者可能是 auto 自动回落的结果，拿它当默认会把 auto 永久钉死。
+"$BIN" up >/tmp/m5-up-inherit.log 2>&1 && ok "不带 --backend 的 up 成功" || bad "不带 --backend 的 up 失败"
+[ "$(runtime_backend)" = "userspace" ] \
+  && ok "普通 up 之后后端仍是 userspace（没有悄悄换回内核）" \
+  || bad "普通 up 把后端改成了 $(runtime_backend)"
+[ "$(python3 -c "import json;print(json.load(open('$ETC/runtime.json')).get('backend_requested',''))" 2>/dev/null)" = "userspace" ] \
+  && ok "backend_requested 仍是 userspace（沿用的是用户的要求）" \
+  || bad "backend_requested 被改掉了"
+
 section "1d. 切回内核：报文里不该有 reserved"
 if "$BIN" switch --backend kernel >/tmp/m5-switch-k.log 2>&1; then
   ok "switch --backend kernel 成功"
