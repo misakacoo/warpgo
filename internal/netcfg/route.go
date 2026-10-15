@@ -69,6 +69,19 @@ func EnsureDefaultRoute(link netlink.Link, family, table int) error {
 	return nil
 }
 
+// EnsureDefaultRouteDev 在 table 里把该族的默认路由指向名为 dev 的接口（幂等）。
+//
+// 与 EnsureDefaultRoute 的区别：它按**名字**找接口。存在的意义是给
+// "接口不是我们建的"场景用 —— 例如官方 WARP 客户端创建的 `CloudflareWARP`，
+// 我们只是往它上面加规则，不负责建它。
+func EnsureDefaultRouteDev(dev string, family, table int) error {
+	link, err := netlink.LinkByName(dev)
+	if err != nil {
+		return fmt.Errorf("接口 %s 不存在: %w", dev, err)
+	}
+	return EnsureDefaultRoute(link, family, table)
+}
+
 // DefaultRouteCount 返回表里默认路由的条数（验收用：幂等性检查）。
 func DefaultRouteCount(family, table int) (int, error) {
 	routes, err := ListTableRoutes(family, table)

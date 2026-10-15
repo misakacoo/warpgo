@@ -77,6 +77,10 @@ func run(args []string) int {
 		return a.cmdPriority(cmdArgs)
 	case "proxy":
 		return a.cmdProxy(cmdArgs)
+	case "client":
+		return a.cmdClient(cmdArgs)
+	case "menu":
+		return a.cmdMenu(cmdArgs)
 	case "watch":
 		return a.cmdWatch(cmdArgs)
 	case "install":
@@ -91,6 +95,10 @@ func run(args []string) int {
 	case "userspace-daemon":
 		// 内部命令：由 up / watch 派生，不进 help 列表。见 cmdUserspaceDaemon。
 		return a.cmdUserspaceDaemon(cmdArgs)
+	case "hook":
+		// 隐藏子命令：由 warp-svc 的 ExecStartPost / ExecStop 调用（菜单 z / x），
+		// 不进 help 列表 —— 它不该由用户日常手动执行。
+		return a.cmdHook(cmdArgs)
 	case "dev":
 		return a.cmdDev(cmdArgs)
 	default:

@@ -10,7 +10,7 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 
 ## 状态
 
-按里程碑推进。当前：**M7 完成（栈优先级 + WireProxy）**
+按里程碑推进。当前：**M8 完成（官方 Linux Client + 钩子 + 交互菜单）**
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
@@ -22,7 +22,7 @@ Debian 上的 Cloudflare WARP 管理工具 —— [fscarmen/warp](https://gitlab
 | M5 | 用户态后端（reserved）+ rotate 换 IP + switch 在线互换 | ✅ 完成（真机 73/73） |
 | M6 | 地址族优先级（菜单 s） | ✅ 完成（真机 30/30） |
 | M7 | WireProxy（菜单 w / y）—— 本地 socks5 出口 | ✅ 完成（真机 84/84） |
-| M8 | 官方 Linux Client（c/l/r/z/x）+ 交互菜单 | 未开始 |
+| M8 | 官方 Linux Client（c/l/r/z/x）+ 交互菜单 | ✅ 完成（真机 76/76） |
 | M9 | BBR + 版本自更新 + 打包 | 未开始 |
 
 **明确不做**（见 [docs/DESIGN.md](docs/DESIGN.md) §3）：
@@ -241,6 +241,54 @@ wireguard 客户端，把 socks5 挂在 **127.0.0.1**（不对外暴露）。
   会明确警告 —— 需要 reserved 的地区请改用隧道模式：`warpgo switch --backend userspace`。
 - `warpgo uninstall` 会一并撤掉它；`proxy uninstall --keep-binary` 可以留下那个二进制。
 
+## 官方 Linux Client（M8 已可用，菜单 c / l / r）
+
+用 Cloudflare **官方**的客户端（`cloudflare-warp` 包）做出口。默认装成
+**socks5 代理模式** —— 它一个字节的路由都不动：
+
+```bash
+sudo ./dist/warpgo client install                  # 默认 proxy 模式（安全）
+sudo ./dist/warpgo client install --port 25344     # 换 socks5 端口（默认 40000）
+sudo ./dist/warpgo client on | off                 # 开关（菜单 r）
+sudo ./dist/warpgo client status [--json]          # 看状态
+
+curl -x socks5h://127.0.0.1:40000 https://1.1.1.1/cdn-cgi/trace | grep warp   # warp=on
+
+sudo ./dist/warpgo client mode warp                # 切到 WARP 模式（会接管默认路由！）
+sudo ./dist/warpgo client uninstall                # 卸载（含 apt 源与钩子）
+```
+
+> ⚠️ **`--mode warp` 会接管默认路由**（整机流量走 WARP）。在一台只能靠 SSH
+> 进入的服务器上，这有可能把你关在门外 —— 请确认能通过控制台 / VNC 恢复再用。
+> 只想给本机多一个出口，用默认的 proxy 模式就够了。
+
+几个刻意的做法：
+
+- **`warp-cli -j` 才是稳的解析入口**。`settings` 的文本输出长这样：
+  `(user set)	Mode: WarpProxy on port 40000` —— 前面多一列"取值来源"、值后面还跟着端口，
+  按正则刮文本迟早被下一个版本打垮。所以**先试 `-j`（结构化 JSON）、不认才退回文本**。
+- **apt 源与密钥环只删自己建的**：安装时把"新建了哪几个文件"记进状态，
+  卸载时只删那几份 —— 机器上本来就有官方源的话，那是你的配置，不是我们的。
+- **钩子（菜单 z / x）用 systemd drop-in 挂载**，而不是去 `sed` 包自带的单元文件：
+  后者由 dpkg 管，下次 `apt upgrade` 会静默覆盖它（症状是"重启之后规则又没了"）。
+  钩子用的表号与规则优先级**与 warpgo 自己的隧道完全错开**，清理互不干扰。
+- `hook add|del` 是**隐藏子命令**，被 `warp-svc` 的 `ExecStartPost` / `ExecStop` 调用；
+  它们**永远以 0 退出**（非零会让 systemd 把整个单元标成 failed）。
+- 总卸载 `warpgo uninstall` 会联动撤销它，但**没有状态文件就不动** ——
+  机器上本来就装着官方客户端的话，我们无权把它删掉。
+- 真实客户端**只跑 proxy 模式**做验收；warp 模式那条路要显式设
+  `M8_TEST_WARP=1` 才会跑（原因见上面的警告）。
+
+## 交互菜单（M8 已可用）
+
+```bash
+sudo ./dist/warpgo menu
+```
+
+菜单是**薄封装**：每个选项最终都翻译成一条已经存在的子命令再执行。
+好处是菜单与命令行走**同一条代码路径**（不会出现"命令行能修好、菜单修不好"），
+而且每一项都能被脚本复现 —— 把菜单里的命令抄下来就是那条命令。
+
 ## 卸载（M4 已可用）
 
 ```bash
@@ -289,6 +337,7 @@ tests/e2e/m4-watch.sh                  # M4 真机验收（保活 + systemd + �
 tests/e2e/m5-userspace.sh              # M5 真机验收（用户态后端 + 抓包验 reserved + 换 IP，73 项）
 tests/e2e/m6-priority.sh               # M6 真机验收（gai.conf 三态 + getent 实测顺序，30 项）
 tests/e2e/m7-proxy.sh                  # M7 真机验收（真实下载 + socks5 实测 + 零残留，84 项）
+tests/e2e/m8-client.sh                 # M8 真机验收（真实装包 + 钩子 + 菜单，76 项）
 ```
 
 `m5-userspace.sh` 会**真的在两套后端之间来回切换**、**真的重新注册一个新账户**
@@ -302,6 +351,12 @@ tests/e2e/m7-proxy.sh                  # M7 真机验收（真实下载 + socks5
 
 `m6-priority.sh` 会真的改 `/etc/gai.conf`，结束时按 sha256 逐字节还原；
 它用 `getent ahosts` 验效果，因为那才是用户实际会遇到的解析路径。
+
+`m8-client.sh` 会**真的装 `cloudflare-warp`**（加 apt 源 + 导公钥 + apt 装包）、
+真的注册设备、真的经 socks5 发请求。它有一条**安全边界**：真实客户端只跑
+**proxy 模式**（不动路由），钩子用**一个 dummy 的 `CloudflareWARP` 接口**来验 ——
+这样"warp 模式接管默认路由、可能切断 SSH"那一步不会在例行验收里被无意触发
+（要跑它得显式设 `M8_TEST_WARP=1`）。
 
 真机验收脚本会**动真实的网络与 systemd**，所以它们都自带 trap 兜底，
 并且建议用 `setsid` 在后台跑、再挂一个"死人开关"（M3 那个脚本还会**故意断网几秒** ——

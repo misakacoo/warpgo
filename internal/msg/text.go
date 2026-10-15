@@ -23,14 +23,16 @@ var text = map[string]string{
   switch               在线互换后端（内核 / 用户态）或工作模式
   priority             地址族优先级：4 = IPv4 优先，6 = IPv6 优先，d = 系统默认
   proxy                WireProxy：把 WARP 做成一个本地 socks5 出口
+  client               官方 WARP 客户端：install / mode / on / off / status / uninstall
 
 保活:
   watch                巡检：健康就不动，断了才重建
   install              把保活装成 systemd 服务（开机自启 + 立即启动）
-  uninstall            撤干净：单元、隧道、二进制、WireProxy、DNS 改动
+  uninstall            撤干净：单元、隧道、二进制、WireProxy、官方客户端、DNS 改动
   confirm              保留本次变更并解除回滚保险丝
 
 其他:
+  menu                 交互菜单（每个选项就是一条子命令）
   version              显示版本信息（--check 会去 GitHub 查新版本）
   help                 显示本帮助
   dev lock             演练单实例锁（开发调试用）
@@ -282,9 +284,9 @@ install 的选项:
   --from <本地文件>      离线安装：用本机已有的归档或二进制
   --mtu <MTU>            隧道内 MTU（默认与外层隧道一致）
   --no-start             只装好，不立刻启动`,
-	KeyProxyNotDebian:   "装的是开机自启的服务，因此拒绝在 %s 上运行",
-	KeyProxyPortBusy:    "端口 %d 已经有人在监听 —— 换一个端口（--port）或先停掉那个进程",
-	KeyProxyBinary:      "已安装 %s（版本 %s，来源 %s，sha256 %s）",
+	KeyProxyNotDebian: "装的是开机自启的服务，因此拒绝在 %s 上运行",
+	KeyProxyPortBusy:  "端口 %d 已经有人在监听 —— 换一个端口（--port）或先停掉那个进程",
+	KeyProxyBinary:    "已安装 %s（版本 %s，来源 %s，sha256 %s）",
 	KeyProxyFromLocal: "离线安装：使用本机文件 %s（没有联网，也没有发布页清单可核对；" +
 		"给了 --sha256 才会核对它）",
 	KeyProxyVersion:     "wireproxy 版本: %s",
@@ -309,4 +311,75 @@ install 的选项:
 	KeyProxyUninstalled:  "已撤销 WireProxy（处理了 %d 项：单元、二进制、配置与状态）",
 	KeyProxyStatusTitle:  "WireProxy 状态",
 	KeyUninstallProxy:    "已一并撤销 WireProxy（菜单 w 装的那套）",
-}
+
+	// 官方 Linux Client（M8）
+	KeyClientUsage:            "用法: warpgo client install|uninstall|mode|on|off|status [选项]",
+	KeyClientNotDebian:        "官方客户端只提供 Debian 系（apt）的包，因此拒绝在 %s 上运行",
+	KeyClientArch:             "官方客户端只发布 amd64 / arm64 的包，当前架构是 %s",
+	KeyClientAlreadyInstalled: "本机已经装过官方客户端 —— 继续按新参数重新配置",
+	KeyClientRepoCreated:      "已配置 apt 源（新建 %d 个文件，codename=%s）",
+	KeyClientRepoReady:        "apt 源已在位（codename=%s）",
+	KeyClientInstalling:       "正在安装 cloudflare-warp（apt）…",
+	KeyClientInstalled:        "已安装 %s",
+	KeyClientCLIMissing:       "装完之后仍然找不到 warp-cli —— 安装很可能失败了，请回看 apt 的输出",
+	KeyClientServiceWaiting:   "正在等待客户端服务就绪（/run/cloudflare-warp/warp_service）…",
+	KeyClientServiceStarted:   "客户端服务已就绪",
+	KeyClientServiceDown:      "%s 没有在运行（用 `warpgo client on` 启动，或重跑 install）",
+	KeyClientRegistering:      "正在注册本机设备…",
+	KeyClientRegistered:       "注册完成",
+	KeyClientModeSet:          "已设置工作模式: %s",
+	KeyClientNoStart:          "--no-start：只配置好，没有连接",
+	KeyClientIfaceWaiting:     "正在等待接口 CloudflareWARP 出现…",
+	KeyClientIfaceMissing: "等不到 CloudflareWARP 接口: %v\n" +
+		"（多半是客户端没能连上，用 `warpgo client status` 看它的状态）",
+	KeyClientIfaceUp:        "接口 %s 已就绪",
+	KeyClientSocksWaiting:   "正在等待 socks5 端口开始监听…",
+	KeyClientSocksMissing:   "等不到 socks5 端口: %v",
+	KeyClientSocksOK:        "socks5 已可用（端口 %d）",
+	KeyClientHooksInstalled: "已写入钩子 %s（指向 %s）：服务起来后自动补策略规则、停下时撤掉",
+	KeyClientHooksAdded:     "已加上策略规则（规则 %d 条、路由 %d 条）",
+	KeyClientHooksFailed: "策略规则没能加上：%v\n" +
+		"（客户端本身可用；缺的只是「让以接口地址为源的流量走 WARP」这一步）",
+	KeyClientInstallDone:    "官方客户端安装完成（模式 %s）",
+	KeyClientNotInstalled:   "本机还没有装官方客户端 —— 先执行 `warpgo client install`",
+	KeyClientAlreadyOn:      "官方客户端本来就已经连着",
+	KeyClientAlreadyOff:     "官方客户端本来就没连",
+	KeyClientOnOK:           "官方客户端已连接",
+	KeyClientOffOK:          "官方客户端已断开",
+	KeyClientStatusTitle:    "官方客户端状态",
+	KeyClientUninstallStart: "正在撤销官方客户端…",
+	KeyClientUninstallDone:  "官方客户端已撤销",
+	KeyClientDropInRemoved:  "已删除钩子 %s",
+	KeyClientRepoRemoved:    "已删除我们建的 apt 源文件（%d 个）",
+	KeyClientRepoKept:       "apt 源与密钥环保持不变（不是我们建的，或用了 --keep-repo）",
+	KeyClientWarpRisk: "注意：官方客户端的 warp 模式会**接管默认路由**（整机流量走 WARP）。\n" +
+		"  在远程服务器上这有可能切断 SSH —— 请确认能通过控制台 / VNC 恢复再用；\n" +
+		"  只想让本机多一个出口而不动路由的话，用默认的 proxy 模式。",
+	KeyClientNotOurs: "本机装着官方客户端，但不是 warpgo 装的 —— 总卸载不去动它" +
+		"（要删请显式执行 `warpgo client uninstall`）",
+
+	// 钩子（M8，菜单 z / x）
+	KeyHookUsage:       "用法: warpgo hook add [--wait 30s] | warpgo hook del（隐藏命令，供 warp-svc 的 ExecStartPost / ExecStop 调用）",
+	KeyHookAdded:       "已加上钩子规则（规则 %d 条、路由 %d 条）",
+	KeyHookRemoved:     "已撤掉钩子规则（规则 %d 条、路由 %d 条）",
+	KeyHookIfaceAbsent: "接口 %s 还没出现，本次不加规则（客户端多半不在 warp 模式下，或还没连上）",
+	KeyHookNeedRoot:    "%s 需要 root 权限（要改策略路由）",
+
+	// 交互菜单（M8）
+	KeyMenuTitle:         "warpgo 交互菜单",
+	KeyMenuPrompt:        "请选择> ",
+	KeyMenuQuit:          "退出",
+	KeyMenuBye:           "再见。",
+	KeyMenuBadChoice:     "不认识的选择: %s",
+	KeyMenuSubFailed:     "`%s` 以退出码 %d 结束",
+	KeyMenuNoRuntime:     "还没有运行态（先 `up` 一次），不知道当前用的是哪个",
+	KeyMenuSwitchTo:      "当前 %s → 将切到 %s",
+	KeyMenuAskPriority:   "地址族优先级（4 = IPv4 优先，6 = IPv6 优先，d = 系统默认）> ",
+	KeyMenuUpNonGlobal:   "建立隧道（非全局，不会切断 SSH）",
+	KeyMenuUpGlobal:      "建立隧道（全局接管，带自动回滚）",
+	KeyMenuDown:          "拆除隧道",
+	KeyMenuStatus:        "查看状态",
+	KeyMenuRotate:        "换一个出口 IP（重新注册）",
+	KeyMenuSwitchBackend: "在线互换后端（内核 ↔ 用户态）",
+	KeyMenuSwitchMode:    "在线互换工作模式（非全局 ↔ 全局）",
+	KeyMenuPrio

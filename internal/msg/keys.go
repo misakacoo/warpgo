@@ -264,6 +264,84 @@ const (
 	KeyProxyUninstalled  = "proxy.uninstalled"
 	KeyProxyStatusTitle  = "proxy.status_title"
 	KeyUninstallProxy    = "uninstall.proxy_removed"
+
+	// 官方 Linux Client（M8，菜单 c / l / r）
+	KeyClientUsage            = "client.usage"
+	KeyClientNotDebian        = "client.not_debian"
+	KeyClientArch             = "client.arch_unsupported"
+	KeyClientAlreadyInstalled = "client.already_installed"
+	KeyClientRepoCreated      = "client.repo_created"
+	KeyClientRepoReady        = "client.repo_ready"
+	KeyClientInstalling       = "client.installing"
+	KeyClientInstalled        = "client.installed"
+	KeyClientCLIMissing       = "client.cli_missing"
+	KeyClientServiceWaiting   = "client.service_waiting"
+	KeyClientServiceStarted   = "client.service_started"
+	KeyClientServiceDown      = "client.service_down"
+	KeyClientRegistering      = "client.registering"
+	KeyClientRegistered       = "client.registered"
+	KeyClientModeSet          = "client.mode_set"
+	KeyClientNoStart          = "client.no_start"
+	KeyClientIfaceWaiting     = "client.iface_waiting"
+	KeyClientIfaceMissing     = "client.iface_missing"
+	KeyClientIfaceUp          = "client.iface_up"
+	KeyClientSocksWaiting     = "client.socks_waiting"
+	KeyClientSocksMissing     = "client.socks_missing"
+	KeyClientSocksOK          = "client.socks_ok"
+	KeyClientHooksInstalled   = "client.hooks_installed"
+	KeyClientHooksAdded       = "client.hooks_added"
+	KeyClientHooksFailed      = "client.hooks_failed"
+	KeyClientInstallDone      = "client.install_done"
+	KeyClientNotInstalled     = "client.not_installed"
+	KeyClientAlreadyOn        = "client.already_on"
+	KeyClientAlreadyOff       = "client.already_off"
+	KeyClientOnOK             = "client.on_ok"
+	KeyClientOffOK            = "client.off_ok"
+	KeyClientStatusTitle      = "client.status_title"
+	KeyClientUninstallStart   = "client.uninstall_start"
+	KeyClientUninstallDone    = "client.uninstall_done"
+	KeyClientDropInRemoved    = "client.dropin_removed"
+	KeyClientRepoRemoved      = "client.repo_removed"
+	KeyClientRepoKept         = "client.repo_kept"
+	KeyClientWarpRisk         = "client.warp_risk"
+	KeyClientNotOurs          = "client.not_ours"
+
+	// 钩子（M8，菜单 z / x —— 隐藏子命令）
+	KeyHookUsage       = "hook.usage"
+	KeyHookAdded       = "hook.added"
+	KeyHookRemoved     = "hook.removed"
+	KeyHookIfaceAbsent = "hook.iface_absent"
+	KeyHookNeedRoot    = "hook.need_root"
+
+	// 交互菜单（M8）
+	KeyMenuTitle         = "menu.title"
+	KeyMenuPrompt        = "menu.prompt"
+	KeyMenuQuit          = "menu.quit"
+	KeyMenuBye           = "menu.bye"
+	KeyMenuBadChoice     = "menu.bad_choice"
+	KeyMenuSubFailed     = "menu.sub_failed"
+	KeyMenuNoRuntime     = "menu.no_runtime"
+	KeyMenuSwitchTo      = "menu.switch_to"
+	KeyMenuAskPriority   = "menu.ask_priority"
+	KeyMenuUpNonGlobal   = "menu.up_non_global"
+	KeyMenuUpGlobal      = "menu.up_global"
+	KeyMenuDown          = "menu.down"
+	KeyMenuStatus        = "menu.status"
+	KeyMenuRotate        = "menu.rotate"
+	KeyMenuSwitchBackend = "menu.switch_backend"
+	KeyMenuSwitchMode    = "menu.switch_mode"
+	KeyMenuPriority      = "menu.priority"
+	KeyMenuClientProxy   = "menu.client_proxy"
+	KeyMenuClientWarp    = "menu.client_warp"
+	KeyMenuClientToggle  = "menu.client_toggle"
+	KeyMenuClientStatus  = "menu.client_status"
+	KeyMenuProxyInstall  = "menu.proxy_install"
+	KeyMenuProxyToggle   = "menu.proxy_toggle"
+	KeyMenuInstallWatch  = "menu.install_watch"
+	KeyMenuUninstall     = "menu.uninstall"
+
+	// 总卸载的客户端联动（M8）
+	KeyUninstallClient = "uninstall.client_removed"
 )
 
 // AllKeys 列出本文件声明的全部 key。
@@ -476,5 +554,75 @@ func AllKeys() []string {
 		KeyProxyUninstalled,
 		KeyProxyStatusTitle,
 		KeyUninstallProxy,
+		KeyClientUsage,
+		KeyClientNotDebian,
+		KeyClientArch,
+		KeyClientAlreadyInstalled,
+		KeyClientRepoCreated,
+		KeyClientRepoReady,
+		KeyClientInstalling,
+		KeyClientInstalled,
+		KeyClientCLIMissing,
+		KeyClientServiceWaiting,
+		KeyClientServiceStarted,
+		KeyClientServiceDown,
+		KeyClientRegistering,
+		KeyClientRegistered,
+		KeyClientModeSet,
+		KeyClientNoStart,
+		KeyClientIfaceWaiting,
+		KeyClientIfaceMissing,
+		KeyClientIfaceUp,
+		KeyClientSocksWaiting,
+		KeyClientSocksMissing,
+		KeyClientSocksOK,
+		KeyClientHooksInstalled,
+		KeyClientHooksAdded,
+		KeyClientHooksFailed,
+		KeyClientInstallDone,
+		KeyClientNotInstalled,
+		KeyClientAlreadyOn,
+		KeyClientAlreadyOff,
+		KeyClientOnOK,
+		KeyClientOffOK,
+		KeyClientStatusTitle,
+		KeyClientUninstallStart,
+		KeyClientUninstallDone,
+		KeyClientDropInRemoved,
+		KeyClientRepoRemoved,
+		KeyClientRepoKept,
+		KeyClientWarpRisk,
+		KeyClientNotOurs,
+		KeyHookUsage,
+		KeyHookAdded,
+		KeyHookRemoved,
+		KeyHookIfaceAbsent,
+		KeyHookNeedRoot,
+		KeyMenuTitle,
+		KeyMenuPrompt,
+		KeyMenuQuit,
+		KeyMenuBye,
+		KeyMenuBadChoice,
+		KeyMenuSubFailed,
+		KeyMenuNoRuntime,
+		KeyMenuSwitchTo,
+		KeyMenuAskPriority,
+		KeyMenuUpNonGlobal,
+		KeyMenuUpGlobal,
+		KeyMenuDown,
+		KeyMenuStatus,
+		KeyMenuRotate,
+		KeyMenuSwitchBackend,
+		KeyMenuSwitchMode,
+		KeyMenuPriority,
+		KeyMenuClientProxy,
+		KeyMenuClientWarp,
+		KeyMenuClientToggle,
+		KeyMenuClientStatus,
+		KeyMenuProxyInstall,
+		KeyMenuProxyToggle,
+		KeyMenuInstallWatch,
+		KeyMenuUninstall,
+		KeyUninstallClient,
 	}
 }

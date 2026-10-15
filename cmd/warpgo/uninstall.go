@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/misakacoo/warpgo/internal/cfclient"
 	"github.com/misakacoo/warpgo/internal/dns"
 	"github.com/misakacoo/warpgo/internal/msg"
 	"github.com/misakacoo/warpgo/internal/netcfg"
@@ -24,6 +25,8 @@ var knownStateFiles = map[string]bool{
 	dns.MetaFileName:    true,
 	proxy.ConfFileName:  true, // WireProxy 的配置（里面有私钥）
 	proxy.StateFileName: true, // WireProxy 的安装状态
+	// 官方 Linux Client 的安装记录（我们建了哪些 apt 源文件、有没有写 drop-in）。
+	cfclient.StateFileName: true,
 	// 预留：将来加用户可编辑的默认值文件时不用再改这里。
 	"warpgo.toml": true,
 }
@@ -140,6 +143,17 @@ func (a *app) cmdUninstall(args []string) int {
 		a.log.Infof("%s", msg.T(msg.KeyUninstallProxy))
 	} else {
 		a.log.Debugf("%s", msg.T(msg.KeyProxyNotInstalled))
+	}
+
+	// ④b 撤销官方 Linux Client（菜单 c / l）。
+	//
+	// 走的是与 `warpgo client uninstall` **完全一样**的那份实现（clientRemove），
+	// 否则两条路径迟早会分叉。它同样必须在删状态目录之前 —— 那份状态记录着
+	// "apt 源与密钥环里哪几份是我们建的"，先删了就再也不敢删它们（怕误删用户的）。
+	if touched, _ := a.clientRemove(ctx, false, true); touched {
+		a.log.Infof("%s", msg.T(msg.KeyUninstallClient))
+	} else {
+		a.log.Debugf("%s", msg.T(msg.KeyClientNotInstalled))
 	}
 
 	// ⑤ 删二进制。
