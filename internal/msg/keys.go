@@ -305,6 +305,7 @@ const (
 	KeyClientDropInRemoved    = "client.dropin_removed"
 	KeyClientRepoRemoved      = "client.repo_removed"
 	KeyClientRepoKept         = "client.repo_kept"
+	KeyClientSvcRuleRemoved   = "client.svc_rule_removed"
 	KeyClientWarpRisk         = "client.warp_risk"
 	KeyClientNotOurs          = "client.not_ours"
 
@@ -627,6 +628,7 @@ func AllKeys() []string {
 		KeyClientDropInRemoved,
 		KeyClientRepoRemoved,
 		KeyClientRepoKept,
+		KeyClientSvcRuleRemoved,
 		KeyClientWarpRisk,
 		KeyClientNotOurs,
 		KeyHookUsage,

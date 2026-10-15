@@ -587,6 +587,21 @@ func (a *app) clientRemove(ctx context.Context, keepRepo, requireState bool) (bo
 		}
 	}
 
+	// ③b warp-svc 自己写的那条策略规则。
+	//
+	// 它做整机接管时会插 `not fwmark 0x100cf lookup 65743`（pref 8999），
+	// 用于把隧道自己的封装包排除在外。**正常注销时它会自己撤**，但我们这条
+	// 路径是"停服务 → 卸包"，服务被硬杀，规则就留下了。表随包一起消失、
+	// lookup 落空，实际无害 —— 可是卸载的承诺是零残留，所以这里补一刀。
+	// 必须排在卸包之后：服务还在跑的话，删了它也会立刻再插回来。
+	if removed, err := cfclient.SvcCleanupRules(); err != nil {
+		a.log.Warnf("%v", err)
+	} else {
+		for _, r := range removed {
+			a.log.Infof("%s", msg.Tf(msg.KeyClientSvcRuleRemoved, r))
+		}
+	}
+
 	// ④ drop-in。
 	if removed, err := mgr.RemoveDropIn(ctx); err != nil {
 		a.log.Warnf("%v", err)

@@ -362,6 +362,7 @@ install 的选项:
 	KeyClientDropInRemoved:  "已删除钩子 %s",
 	KeyClientRepoRemoved:    "已删除我们建的 apt 源文件（%d 个）",
 	KeyClientRepoKept:       "apt 源与密钥环保持不变（不是我们建的，或用了 --keep-repo）",
+	KeyClientSvcRuleRemoved: "已删除官方客户端遗留的策略规则: %s",
 	KeyClientWarpRisk: "注意：官方客户端的 warp 模式会**接管默认路由**（整机流量走 WARP）。\n" +
 		"  在远程服务器上这有可能切断 SSH —— 请确认能通过控制台 / VNC 恢复再用；\n" +
 		"  只想让本机多一个出口而不动路由的话，用默认的 proxy 模式。",

@@ -768,6 +768,13 @@ wireguard 客户端（第三方二进制 `wireproxy`），把一个 socks5 入�
 
   `warpgo client uninstall`。
 - apt 源与密钥环**只删我们建的那几份**（安装时把"新建了哪些"记进状态文件）。
+- **`warp-svc` 自己写的策略规则也要收尾**（`internal/cfclient/svcnet.go`）。
+  官方客户端整机接管时插 `not fwmark 0x100cf lookup 65743`（pref **8999**，v4/v6 各一条），
+  用它把隧道自己的封装包排除在外。正常注销时 warp-svc 自己会撤；但卸载路径是
+  "停服务 → 卸包"，服务被硬杀，规则就留在系统里了（表随包消失、lookup 落空，实际无害，
+  但零残留承诺里不该有它）。因此卸包之后按 **pref + 取反 + fwmark + 表号**逐项核对再删，
+  撞上同号的无关配置就拒绝动手 —— 与钩子清理、`netcfg.CleanupRules` 同一条原则。
+  顺序不能提前：服务还在跑的话，删掉它立刻会再插回来。
 - 卸包用 `apt-get purge`：它只会多删**这个包自己声明的**配置文件
 
   （如 `/var/lib/cloudflare-warp` 下的注册信息），不会碰任何不属于它的东西

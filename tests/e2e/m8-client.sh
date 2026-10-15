@@ -54,6 +54,14 @@ rules_total_hook() {
   echo $(( $(rules_at 4 $PREF_SUPPRESS) + $(rules_at 6 $PREF_SUPPRESS) \
          + $(rules_at 4 $PREF_FROM_V4) + $(rules_at 6 $PREF_FROM_V6) ))
 }
+# warp-svc 自己写的规则（pref 8999 的 `not fwmark 0x100cf lookup 65743`）。
+# 它**不走我们的钩子**：钩子规则由 warpgo 加、warpgo 撤，而这条是 warp-svc
+# 自己在整机接管时插的，正常注销时它自己会撤；卸载路径是"停服务→卸包"，
+# 服务被硬杀，规则就留下了 —— 所以由 warpgo 在卸包之后补一刀。
+svc_rule_count() {
+  echo $(( $(ip -4 rule show 2>/dev/null | grep -c 'fwmark 0x100cf') \
+         + $(ip -6 rule show 2>/dev/null | grep -c 'fwmark 0x100cf') ))
+}
 route_count() { # $1 = 4|6
   ip -"$1" route show table $HOOK_TABLE 2>/dev/null | grep -c '^default' || true
 }
@@ -261,6 +269,7 @@ fi
 # ---- 5. 卸载（零残留） ----------------------------------------------------------
 
 section "5. client uninstall"
+note "官方客户端自己的规则（卸载前）: $(svc_rule_count) 条"
 "$BIN" client uninstall >/tmp/m8-uninstall.txt 2>&1 && ok "uninstall 成功" || bad "uninstall 失败"
 [ "$(have_cli)" = "no" ] && ok "warp-cli 已删除（包已卸载）" || bad "warp-cli 仍在"
 [ -f "$APT_LIST" ] && bad "apt 源残留" || ok "我们建的 apt 源已删除"
@@ -268,6 +277,7 @@ section "5. client uninstall"
 [ -f "$CSTATE" ] && bad "状态文件残留" || ok "状态文件已删除"
 [ -f "$DROPIN" ] && bad "drop-in 残留" || ok "drop-in 不存在（本来就没写）"
 [ "$(rules_total_hook)" = "0" ] && ok "钩子规则已清空" || bad "还有 $(rules_total_hook) 条钩子规则"
+[ "$(svc_rule_count)" = "0" ] && ok "warp-svc 自己的规则也已清空（钩子之外的残留）" || bad "还有 $(svc_rule_count) 条 warp-svc 规则: $(ip -4 rule show | grep 'fwmark 0x100cf')"
 [ "$(port_listen "$PORT")" = "0" ] && ok "socks5 端口已释放" || bad "端口仍被占用"
 "$BIN" client uninstall >/dev/null 2>&1 && ok "重复 uninstall 也成功（幂等）" || bad "重复 uninstall 失败"
 [ "$(tunnel_ok)" = "yes" ] && ok "隧道没被这套东西影响（仍 warp=on）" || bad "隧道被影响了"
@@ -285,6 +295,9 @@ grep -q "已一并撤销官方 Linux Client" /tmp/m8-full-uninstall.txt \
   || bad "总卸载没有撤销官方客户端"
 [ "$(have_cli)" = "no" ] && ok "整体卸载后 warp-cli 已删除" || bad "整体卸载后 warp-cli 仍在"
 [ -f "$APT_LIST" ] && bad "整体卸载后 apt 源残留" || ok "整体卸载后 apt 源已删除"
+# 总卸载与 client uninstall 走同一份实现（clientRemove），这条也要一并成立 ——
+# 否则"手工撤得干净、总卸载却留了尾巴"这类偏差迟早出现。
+[ "$(svc_rule_count)" = "0" ] && ok "整体卸载后 warp-svc 自己的规则也没了" || bad "整体卸载后仍有 $(svc_rule_count) 条 warp-svc 规则"
 # 注意：`warpgo uninstall` **本来就会**拆掉隧道（那是它的职责之一），
 # 所以这里断言的是"它确实拆了"，而不是"隧道还在"。
 if [ "$(tunnel_ok)" = "no" ]; then

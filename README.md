@@ -187,7 +187,7 @@ sudo warpgo install
 | `warpgo client install [--mode proxy\|warp] [--port 40000]` | 安装 Cloudflare 官方客户端 |
 | `warpgo client mode proxy\|warp` | 切换官方客户端的模式 |
 | `warpgo client on\|off\|status [--json]` | 官方客户端开关与状态 |
-| `warpgo client uninstall [--keep-repo]` | 卸载官方客户端（含 apt 源与钩子） |
+| `warpgo client uninstall [--keep-repo]` | 卸载官方客户端（含 apt 源、钩子与 warp-svc 自己留下的策略规则） |
 
 ### 其他
 
@@ -511,7 +511,7 @@ sudo warpgo client status [--json]
 curl -x socks5h://127.0.0.1:40000 https://1.1.1.1/cdn-cgi/trace | grep warp   # warp=on
 
 sudo warpgo client mode warp                # 切到 WARP 模式（会接管默认路由！）
-sudo warpgo client uninstall                # 卸载（含 apt 源与钩子）
+sudo warpgo client uninstall                # 卸载（含 apt 源、钩子与残留规则）
 ```
 
 > **警告：`--mode warp` 会接管默认路由**（整机流量走 WARP）。在一台只能靠 SSH
@@ -528,6 +528,11 @@ sudo warpgo client uninstall                # 卸载（含 apt 源与钩子）
 - **钩子用 systemd drop-in 挂载**，而不是去 `sed` 包自带的单元文件：
   后者由 dpkg 管，下次 `apt upgrade` 会静默覆盖它（症状是"重启之后规则又没了"）。
   钩子用的表号与规则优先级**与 warpgo 自己的隧道完全错开**，两边的清理互不干扰。
+- **`warp-svc` 自己写的策略规则也要收尾。** 官方客户端做整机接管时会往系统里插
+  `not fwmark 0x100cf lookup 65743`（pref 8999）。正常注销时它自己会撤，但卸载是
+  "停服务 → 卸包"，服务被硬杀，规则就留下了 —— 表随包消失、lookup 落空、实际无害，
+  可"零残留"的承诺里不该有这么一条。卸载时按 pref + 取反 + fwmark + 表号
+  **逐项核对后**才删，撞上同号的无关配置就拒绝动手。
 - `warpgo uninstall` 会联动撤销它，但**没有状态文件就不动** ——
   机器上本来就装着官方客户端的话，我们无权把它删掉。
 
