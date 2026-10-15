@@ -151,9 +151,15 @@ sudo install -m 0755 dist/warpgo /usr/bin/warpgo
 # 1. 注册一台 WARP 设备（私钥在本机生成，绝不外发）
 sudo warpgo register
 
-# 2. 建立隧道（默认非全局，不会碰你的 SSH）
-sudo warpgo up
+# 2. 建立隧道，并把保活一起装上（默认非全局，不会碰你的 SSH）
+sudo warpgo up --keepalive
+```
 
+`--keepalive` 会把 `warpgo` 装成开机自启的服务（断了自动重建）——
+隧道起来之后总得有东西看着它，所以**交互菜单里的「建立隧道」默认就带这一步**，
+命令行上你自己决定。只想建隧道、不留服务就用不带参数的 `sudo warpgo up`。
+
+```bash
 # 3. 看看状态
 sudo warpgo status
 ```
@@ -171,7 +177,7 @@ curl -4 -s --interface warp https://1.1.1.1/cdn-cgi/trace | grep warp
 装上保活，让它开机自启并在断线时自己修好：
 
 ```bash
-sudo warpgo install
+sudo warpgo install        # 用 `up --keepalive` 建过隧道的话，这一步已经做过了
 ```
 
 就这些。剩下的能力按"你需要什么"往下读。
